@@ -1,0 +1,37 @@
+{
+  "source": {
+    "size": 41237142,
+    "mtime_ns": 1789138011110198995,
+    "sha256": "b1f6f8e313c35bdef65fb7fb31d7ad0b972296b5543faf048f329b74bf7cc0b2"
+  },
+  "built_at": "2026-09-11 23:46:12",
+  "elapsed_seconds": 28.2,
+  "date_min": "2018-04-04",
+  "date_max": "2025-08-01",
+  "district_count": 17,
+  "business_area_count": 297,
+  "community_count": 7943,
+  "cleaning": {
+    "source_rows": 435008,
+    "kept_rows": 434488,
+    "excluded_duplicate": 1,
+    "excluded_missing_location": 2,
+    "excluded_unknown_district": 81,
+    "excluded_outlier": 436,
+    "missing_listing_price": 26
+  },
+  "rules": {
+    "area": [
+      10,
+      500
+    ],
+    "unit_price": [
+      3000,
+      200000
+    ],
+    "sale_price": [
+      10,
+      10000
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="基于 43 万笔真实成交记录的北京二手房滑动窗口分析、动态排行和小区历史查询。"><title>北京二手房成交分析</title><link rel="stylesheet" href="./styles.css"></head>
+<body>
+<header class="app-header"><div><p class="eyebrow">BEIJING RESALE HOUSING</p><h1>北京二手房成交分析</h1><p class="subtitle">先查具体小区，再比较区域表现。价格、成交量和样本可靠性分开看。</p></div><div class="data-status" id="dataStatus">正在读取数据…</div></header>
+<main>
+  <section class="community-search panel hero-panel" aria-labelledby="communitySearchTitle">
+    <div class="section-heading"><div><span class="section-index">01</span><div><h2 id="communitySearchTitle">查具体小区</h2><p>全量搜索，不受排行榜成交量门槛影响。选择后可查看全部历史成交和逐月趋势。</p></div></div></div>
+    <form id="communitySearchForm" class="search-form" autocomplete="off"><label class="search-field"><span class="sr-only">小区名称</span><input id="communitySearch" type="search" placeholder="输入小区名称，例如：阳光南里" aria-controls="communitySuggestions" aria-autocomplete="list"></label><button class="primary-button" type="submit">搜索小区</button></form>
+    <div id="communitySuggestions" class="search-results" role="listbox" hidden></div><p id="communitySearchHint" class="field-help">支持名称中的任意关键词，例如输入“阳光南里”会找到海淀 · 清河 · 阳光南里。</p>
+  </section>
+
+  <section id="communityDetail" class="community-detail" hidden aria-live="polite">
+    <article class="panel detail-header"><div class="detail-title-row"><div><p id="communityBreadcrumb" class="eyebrow dark"></p><h2 id="communityTitle"></h2><p id="communityCoverage" class="section-description"></p></div><button id="closeCommunity" class="secondary-button" type="button">返回市场比较</button></div>
+      <div class="metrics detail-metrics">
+        <article><span>历史成交总数 <button class="info-button" data-help="数据中该小区全部有效成交记录数量。">?</button></span><strong id="detailTotal">—</strong><small id="detailDates">—</small></article>
+        <article><span>当前价格变化 <button class="info-button" data-help="当前窗口统计单价相对基准窗口统计单价的变化。">?</button></span><strong id="detailChange">—</strong><small id="detailPrices">—</small></article>
+        <article><span>当前期成交量 <button class="info-button" data-help="当前比较窗口内的真实成交套数，同时展示月均套数。">?</button></span><strong id="detailCurrentVolume">—</strong><small id="detailBaseVolume">—</small></article>
+        <article><span>历史面积中位数 <button class="info-button" data-help="该小区所有有效成交房源面积的中位数。">?</button></span><strong id="detailArea">—</strong><small id="detailMedianPrice">—</small></article>
+      </div>
+    </article>
+    <section class="chart-grid-two">
+      <article class="panel"><div class="chart-heading"><div><h3 id="communityPriceTitle">历史成交单价</h3><p>圆点是每一笔真实成交；实线是所选窗口的滑动统计价格。</p></div></div><div id="communityPriceChart" class="chart-large"></div></article>
+      <article class="panel"><div class="chart-heading"><div><h3>每月成交量</h3><p>纵轴为当月实际成交套数，不是累计值。虚线为有成交月份的历史月均值。</p></div></div><div id="communityVolumeChart" class="chart-large"></div></article>
+    </section>
+    <article class="panel community-location-panel"><div class="section-heading compact"><div><h3>小区位置</h3><p>通过高德地图在北京范围内搜索小区名称，并定位到具体 POI。</p></div><button id="mapSettingsButton" class="secondary-button" type="button">地图设置</button></div>
+      <form id="communityLocationForm" class="location-search-form"><label>地图搜索词<input id="communityLocationQuery" type="search" placeholder="北京市 + 区 + 商圈 + 小区名称"></label><button class="primary-button" type="submit">重新定位</button></form>
+      <div id="communityLocationMap" class="community-location-map" aria-label="小区高德地图位置"><div class="map-placeholder"><strong>正在准备小区地图…</strong><span>首次使用需要配置高德地图 Web 端 Key。</span></div></div>
+      <div id="communityLocationStatus" class="location-status" role="status" aria-live="polite"></div>
+    </article>
+    <article class="panel transaction-panel"><div class="section-heading compact"><div><h3>全部历史成交记录</h3><p id="transactionCountText"></p></div><label class="inline-filter">筛选记录<input id="transactionSearch" type="search" placeholder="日期 / 户型 / 楼层"></label></div><div class="table-wrap transaction-table-wrap"><table class="transaction-table"><thead><tr><th>成交日期</th><th>户型</th><th>面积</th><th>成交总价</th><th>成交单价</th><th>挂牌价</th><th>成交周期</th><th>楼层 / 朝向</th><th>来源</th></tr></thead><tbody id="transactionBody"></tbody></table></div></article>
+  </section>
+
+  <section id="marketSection">
+    <article class="control-panel" aria-labelledby="controlsTitle"><div class="section-heading"><div><span class="section-index">02</span><div><h2 id="controlsTitle">市场比较设置</h2><p>这组条件只影响区域和小区排行，不会限制上方的全量小区搜索。</p></div></div><button id="resetButton" class="secondary-button" type="button">恢复推荐设置</button></div>
+      <form id="filterForm">
+        <fieldset><legend>第一步：选择比较时间和价格口径</legend><div class="control-grid time-controls">
+          <label>当前期结束月份 <button type="button" class="info-button" data-help="默认使用数据中最后一个完整月份。">?</button><input id="endMonth" name="end_month" type="month" required></label>
+          <label>每个窗口长度 <button type="button" class="info-button" data-help="例如 6 个月表示每个价格点使用向前 6 个月的成交。">?</button><select id="window" name="window"><option value="3">3 个月</option><option value="6" selected>6 个月</option><option value="12">12 个月</option></select></label>
+          <label>基准期选择 <button type="button" class="info-button" data-help="相邻窗口比较连续两段时间；同比窗口比较上年同期。">?</button><select id="compare" name="compare"><option value="adjacent">紧邻当前期的前一窗口</option><option value="yoy">上年同期窗口</option><option value="custom">自定义基准期</option></select></label>
+          <label>价格代表值 <button type="button" class="info-button" data-help="中位数受极端成交影响较小，推荐作为默认口径。">?</button><select id="metric" name="metric"><option value="median">成交单价中位数（推荐）</option><option value="mean">成交单价平均数</option><option value="p30">成交单价 30 分位数</option><option value="p60">成交单价 60 分位数</option><option value="min">最低成交单价</option><option value="max">最高成交单价</option></select></label>
+        </div><div class="custom-period" id="customPeriod" hidden><label>基准开始月<input id="baseStart" name="base_start" type="month"></label><label>基准结束月<input id="baseEnd" name="base_end" type="month"></label></div><p id="periodPreview" class="period-preview">等待计算时间窗口</p></fieldset>
+        <fieldset><legend>第二步：限定要比较的房源</legend><div class="control-grid scope-controls"><label>排行对象<select id="level" name="level"><option value="district">比较北京各区</option><option value="community">比较小区</option></select></label><label>区域<select id="district" name="district"><option>全部</option></select></label><label>商圈<select id="businessArea" name="business_area"><option>全部</option></select></label><label>户型<select id="rooms" name="rooms"><option>全部</option></select></label><label>面积从（㎡）<input id="areaMin" name="area_min" type="number" min="10" max="500" value="10"></label><label>到（㎡）<input id="areaMax" name="area_max" type="number" min="10" max="500" value="500"></label></div></fieldset>
+        <details class="threshold-details"><summary>第三步：设置进入排行榜的最低样本量</summary><p class="field-help">只影响排行榜资格，防止少数成交把小区排到极端位置。查看具体小区历史时不应用这些门槛。</p><div class="control-grid threshold-controls"><label>当前期至少成交（套）<input id="minCurrent" name="min_current" type="number" min="0" value="10"></label><label>基准期至少成交（套）<input id="minBase" name="min_base" type="number" min="0" value="10"></label><label>两期合计至少成交（套）<input id="minTotal" name="min_total" type="number" min="0" value="25"></label><label>每期至少有成交的月份<input id="minActiveMonths" name="min_active_months" type="number" min="0" max="24" value="3"></label></div></details>
+        <div class="control-footer"><span></span><button class="primary-button" type="submit">应用设置并重新计算</button></div>
+      </form>
+    </article>
+    <div id="errorBox" class="error-box" role="alert" hidden></div>
+    <section class="metrics" aria-label="北京整体指标">
+      <article><span>北京价格变化 <button class="info-button" data-help="当前期价格 ÷ 基准期价格 − 1。">?</button></span><strong id="cityChange">—</strong><small id="cityPrice">—</small></article>
+      <article><span>当前期成交总量 <button class="info-button" data-help="当前窗口内满足房源筛选条件的北京成交套数。">?</button></span><strong id="currentVolume">—</strong><small id="volumeChange">—</small></article>
+      <article><span>当前期月均成交 <button class="info-button" data-help="当前期成交总量除以当前窗口月数。">?</button></span><strong id="monthlyVolume">—</strong><small id="monthlyVolumeBase">—</small></article>
+      <article><span>符合排行条件 <button class="info-button" data-help="同时满足全部样本门槛的对象数。">?</button></span><strong id="eligibleCount">—</strong><small id="candidateCount">—</small></article>
+    </section>
+    <section class="analysis-grid">
+      <article class="panel map-panel"><div class="section-heading compact"><div><span class="section-index">03</span><div><h2>区域涨跌地图</h2><p>颜色表示当前期相对基准期的成交单价变化。</p></div></div><span class="legend"><i class="down"></i>下跌 <i class="flat"></i>持平 <i class="up"></i>上涨</span></div><div id="map" class="map" aria-label="北京各区成交单价涨跌地图"></div><p class="panel-note">点击区域可直接查看该区的小区排行。经开区成交合并到大兴区地图轮廓。</p></article>
+      <article class="panel"><div class="chart-heading"><div><span class="section-index">04</span><h2 id="trendTitle">北京价格趋势</h2><p>按所选窗口计算的滑动价格，能降低单月少量成交造成的波动。</p></div></div><div id="trendChart" class="chart-large"></div></article>
+    </section>
+    <article class="panel volume-panel"><div class="chart-heading"><div><span class="section-index">05</span><h2 id="volumeTitle">北京每月成交量</h2><p>每根柱子是当月实际成交套数；图中明确显示绝对刻度、当前期总量和基准期总量。</p></div><div id="volumePeriodSummary" class="period-summary"></div></div><div id="volumeChart" class="chart-medium"></div></article>
+    <article class="panel ranking-panel"><div class="section-heading compact"><div><span class="section-index">06</span><div><h2 id="rankingTitle">区域排行榜</h2><p>条形长度表示所选指标。点击任意条形可查看该区域或小区的趋势与成交明细。</p></div></div><div class="ranking-controls"><label>排行指标<select id="sort" name="sort" form="filterForm"><option value="price_change">价格涨跌幅</option><option value="relative_beijing">相对北京表现</option><option value="resilient_ratio">抗跌小区占比</option><option value="volume_change">成交量变化</option><option value="area_change">面积中位数变化</option><option value="cycle_change">成交周期变化</option></select></label><label>方向<select id="direction" name="direction" form="filterForm"><option value="asc">由低到高</option><option value="desc">由高到低</option></select></label></div></div><div class="ranking-grid"><section><h3>指标排行</h3><p id="rankingMetricHelp" class="field-help"></p><div id="rankingChart" class="ranking-chart"></div></section><section><h3>成交量对比</h3><p class="field-help">当前期和基准期成交套数并排显示，长度使用相同刻度。</p><div id="rankingVolumeChart" class="ranking-chart"></div></section></div><p id="rankingNote" class="panel-note"></p></article>
+    <article class="panel methodology-panel"><div class="section-heading compact"><div><span class="section-index">07</span><h2>指标说明</h2></div></div><div class="method-grid"><div><h3>价格涨跌幅</h3><p>当前期统计单价 ÷ 基准期统计单价 − 1。负数代表下跌。</p></div><div><h3>相对北京表现</h3><p>对象涨跌幅减去北京整体涨跌幅。正数表示更抗跌。</p></div><div><h3>抗跌小区占比</h3><p>区域内合格小区中，价格表现好于北京整体的小区比例。</p></div><div><h3>面积变化</h3><p>两期成交面积中位数变化，可提示成交结构改变。</p></div><div><h3>成交周期变化</h3><p>从挂牌到成交的天数中位数变化。下降通常意味着成交加快。</p></div><div><h3>议价率变化</h3><p>成交价相对挂牌价的折让变化。越负代表折扣越大。</p></div><div><h3>样本门槛</h3><p>只决定谁能进入排行，不影响具体小区历史查看。</p></div><div><h3>数据清洗</h3><p id="cleaningSummary">正在读取…</p></div></div></article>
+  </section>
+</main>
+<dialog id="mapSettingsDialog" class="map-settings-dialog"><form method="dialog" id="mapSettingsForm"><div class="dialog-heading"><div><h2>高德地图设置</h2><p>创建“Web端（JS API）”应用后填写 Key 和安全密钥。配置仅保存在当前浏览器。</p></div><button type="button" id="closeMapSettings" class="dialog-close" aria-label="关闭">×</button></div><label>Web 端 Key<input id="amapJsKey" autocomplete="off" placeholder="例如：xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></label><label>安全密钥 securityJsCode<input id="amapSecurityCode" type="password" autocomplete="off" placeholder="仅本地开发使用"></label><p class="dialog-note">更安全的方式是在启动前设置 <code>AMAP_JS_KEY</code> 和 <code>AMAP_SECURITY_CODE</code>，安全密钥不会发送给页面。</p><div class="dialog-actions"><button id="clearMapSettings" class="secondary-button" type="button">清除浏览器配置</button><button class="primary-button" value="save" type="submit">保存并加载地图</button></div></form></dialog>
+<div id="helpPopover" class="help-popover" role="tooltip" hidden></div><footer>数据分析工具 · 数据仅来源于项目成交样本 · 不构成投资或购房建议</footer><script>window.DASHBOARD_STATIC_BUILD=location.protocol!=="file:"&&!(location.hostname==="127.0.0.1"||location.hostname==="localhost")</script><script src="./app.js"></script>
+</body></html>

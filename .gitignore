@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+artifacts/
+小红书帖子/
+北京房价小红书帖子-可发布版.zip
+北京成交数据.xlsx
+data/transactions.sqlite3
