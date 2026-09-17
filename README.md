@@ -26,6 +26,8 @@
 
 第一次运行会从 Excel 构建本地 SQLite 缓存，通常需要几十秒。以后如果 Excel 没有变化，会直接使用缓存。
 
+如果项目 `outputs/` 下存在 `北京成交数据_2018-2026地理增强完整版.csv.gz`，本地看板会优先使用这份增强数据；也可以通过 `BEIJING_HOUSE_SOURCE` 显式指定数据源。增强数据和生成的本地缓存均被 Git 忽略，不会自动进入 GitHub 仓库。
+
 默认地址：<http://127.0.0.1:8876>
 
 ## 命令行
@@ -33,6 +35,10 @@
 ```bash
 # 只构建或刷新缓存
 python3 scripts/build_database.py
+
+# 显式指定私有增强数据并重建
+BEIJING_HOUSE_SOURCE="/绝对路径/北京成交数据_2018-2026地理增强完整版.csv.gz" \
+python3 scripts/build_database.py --force
 
 # 启动服务
 python3 app.py
@@ -47,6 +53,8 @@ python3 scripts/export_pages_site.py
 ## GitHub Pages 版本
 
 `docs/` 是可直接部署的纯静态版本。浏览器首次打开会下载约 31 MB 的精简 SQLite 数据库，并通过 SQLite/WASM 在本机完成动态筛选、滑动指标、排行和小区历史查询；服务器不会收到筛选条件，也不需要 Python 后端。
+
+为防止误发布私有增强数据，当本地缓存来自 `.csv.gz` 时，`scripts/export_pages_site.py` 默认会拒绝覆盖 `docs/`。只有显式设置 `ALLOW_PRIVATE_PAGES_EXPORT=1` 才能解除保护；不要对付费或受限数据执行该操作。
 
 - 保留 434,488 条有效成交和 7,943 个小区。
 - 支持与本地版一致的动态统计口径和样本门槛。
@@ -69,7 +77,16 @@ AMAP_SECURITY_CODE="你的安全密钥" \
 python3 app.py
 ```
 
-这种方式会由本地 Python 服务代理高德服务请求，页面中不会包含安全密钥。也可以点击小区详情中的“地图设置”，将 Key 和安全密钥只保存在当前浏览器；该方式适合纯本地使用，不适合部署到公网。
+也可以在项目内创建不会被 Git 跟踪的 `config/amap.local.json`：
+
+```json
+{
+  "amap_js_key": "你的 Web 端 Key",
+  "amap_security_code": "你的安全密钥"
+}
+```
+
+环境变量优先于本地配置文件。这两种方式都会由本地 Python 服务代理高德服务请求，页面中只会获得公开的 Web Key，不会包含安全密钥。也可以点击小区详情中的“地图设置”，将 Key 和安全密钥只保存在当前浏览器；该方式适合纯本地使用，不适合部署到公网。
 
 定位时默认搜索“北京市 + 区 + 商圈 + 小区名”。如果高德返回的地点存在歧义，可以修改地图上方的搜索词并重新定位。成功结果会缓存在当前浏览器中，后续打开同一小区无需重复搜索。
 

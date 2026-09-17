@@ -17,7 +17,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent
 DATABASE = ROOT / "data" / "transactions.sqlite3"
-META_FILE = ROOT / "data" / "build_meta.json"
+LOCAL_META_FILE = ROOT / "data" / "build_meta.local.json"
+META_FILE = LOCAL_META_FILE if LOCAL_META_FILE.exists() else ROOT / "data" / "build_meta.json"
 
 DISTRICT_ALIASES = {"北京经济技术开发区": "大兴"}
 ALLOWED_METRICS = {"median", "mean", "p30", "p60", "min", "max"}
@@ -110,7 +111,7 @@ class QueryConfig:
 
     @classmethod
     def from_params(cls, params: dict, meta: dict) -> "QueryConfig":
-        end_month = get_text(params, "end_month", last_complete_month(meta["date_max"]))
+        end_month = get_text(params, "end_month", meta.get("default_end_month") or last_complete_month(meta["date_max"]))
         window = get_int(params, "window", 6, 1, 24)
         compare = get_text(params, "compare", "adjacent")
         if compare not in {"adjacent", "yoy", "custom"}:
@@ -200,7 +201,7 @@ class AnalyticsService:
             rooms = [row[0] for row in conn.execute("SELECT rooms FROM transactions GROUP BY rooms ORDER BY rooms")]
         result = {
             **self.meta,
-            "default_end_month": last_complete_month(self.meta["date_max"]),
+            "default_end_month": self.meta.get("default_end_month") or last_complete_month(self.meta["date_max"]),
             "min_month": self.meta["date_min"][:7],
             "max_month": self.meta["date_max"][:7],
             "districts": districts,
@@ -264,7 +265,8 @@ class AnalyticsService:
             return cached
         sql = """
             SELECT sale_date, sale_month, layout, rooms, orientation, floor, area,
-                   listing_price, sale_price, unit_price, cycle_days, discount_rate, url
+                   listing_price, sale_price, unit_price, cycle_days, discount_rate, url,
+                   source_name, source_record_id, location_confidence
             FROM transactions
             WHERE district = ? AND business_area = ? AND community = ?
             ORDER BY sale_date ASC, id ASC
@@ -273,6 +275,12 @@ class AnalyticsService:
             frame = pd.read_sql_query(sql, conn, params=[district, business_area, community])
         if frame.empty:
             raise ValueError("未找到该小区的成交记录")
+        valid_listing = (frame["listing_price"] > 0) & (frame["area"] > 0)
+        frame["listing_unit_price"] = np.where(
+            valid_listing,
+            frame["listing_price"] * 10000 / frame["area"],
+            np.nan,
+        )
 
         monthly = []
         rolling = []
@@ -287,10 +295,13 @@ class AnalyticsService:
             })
             window_start = month_shift(month, -(config.window - 1))
             rolling_sample = frame[(frame["sale_month"] >= window_start) & (frame["sale_month"] <= month)]
+            listing_sample = rolling_sample[rolling_sample["listing_unit_price"].notna()]
             rolling.append({
                 "month": month,
                 "price": self._json_number(metric_value(rolling_sample["unit_price"], config.metric)) if not rolling_sample.empty else None,
+                "listing_price": self._json_number(metric_value(listing_sample["listing_unit_price"], config.metric)) if not listing_sample.empty else None,
                 "sample_count": int(len(rolling_sample)),
+                "listing_sample_count": int(len(listing_sample)),
             })
 
         current = frame[(frame["sale_month"] >= config.current_start) & (frame["sale_month"] <= config.current_end)]
@@ -324,9 +335,12 @@ class AnalyticsService:
                     "sale_date": row.sale_date, "layout": row.layout, "orientation": row.orientation,
                     "floor": row.floor, "area": self._json_number(row.area),
                     "listing_price": self._json_number(row.listing_price), "sale_price": self._json_number(row.sale_price),
+                    "listing_unit_price": self._json_number(row.listing_unit_price),
                     "unit_price": self._json_number(row.unit_price),
                     "cycle_days": int(row.cycle_days) if pd.notna(row.cycle_days) else None,
                     "discount_rate": self._json_number(row.discount_rate), "url": row.url,
+                    "source_name": row.source_name, "source_record_id": row.source_record_id,
+                    "location_confidence": row.location_confidence,
                 }
                 for row in frame.sort_values("sale_date", ascending=False).itertuples(index=False)
             ],
@@ -503,6 +517,48 @@ class AnalyticsService:
             },
             "rows": rows,
             "map": map_rows,
+        }
+        self.cache.put(key, result)
+        return result
+
+    def community_heatmap(self, raw_query: str | dict) -> dict:
+        params = parse_qs(raw_query) if isinstance(raw_query, str) else raw_query
+        key = "community-heatmap:" + (raw_query if isinstance(raw_query, str) else json.dumps(params, sort_keys=True, ensure_ascii=False))
+        cached = self.cache.get(key)
+        if cached:
+            return cached
+        config = QueryConfig.from_params(params, self.meta)
+        current = self._load_period(config, config.current_start, config.current_end)
+        base = self._load_period(config, config.base_start, config.base_end)
+        group_cols = ["district", "business_area", "community"]
+        current_agg = self._aggregate(current, group_cols, config.metric, "current")
+        base_agg = self._aggregate(base, group_cols, config.metric, "base")
+        merged = current_agg.merge(base_agg, on=group_cols, how="outer")
+        if merged.empty:
+            eligible = merged
+        else:
+            merged["price_change"] = merged.apply(lambda r: self._safe_change(r.current_price, r.base_price), axis=1)
+            merged["total_volume"] = merged["current_volume"].fillna(0) + merged["base_volume"].fillna(0)
+            merged["eligible"] = (
+                (merged["current_volume"].fillna(0) >= config.min_current)
+                & (merged["base_volume"].fillna(0) >= config.min_base)
+                & (merged["total_volume"] >= config.min_total)
+                & (merged["current_months"].fillna(0) >= config.min_active_months)
+                & (merged["base_months"].fillna(0) >= config.min_active_months)
+                & merged["price_change"].notna()
+            )
+            eligible = merged[merged["eligible"]].sort_values(
+                ["total_volume", "community"], ascending=[False, True]
+            )
+        keep = [
+            "district", "business_area", "community", "current_price", "base_price",
+            "price_change", "current_volume", "base_volume", "total_volume",
+        ]
+        rows = self._records(eligible[keep]) if not eligible.empty else []
+        result = {
+            "config": config.__dict__,
+            "summary": {"eligible_count": len(rows)},
+            "rows": rows,
         }
         self.cache.put(key, result)
         return result

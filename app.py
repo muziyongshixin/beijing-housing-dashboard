@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import sys
+import tempfile
 import threading
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +20,58 @@ from scripts.build_database import build
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 AMAP_SERVICE_PREFIX = "/_AMapService"
+LOCAL_AMAP_CONFIG = ROOT / "config" / "amap.local.json"
+LOCAL_COMMUNITY_LOCATIONS = ROOT / "data" / "community_locations.local.json"
+LOCATION_CACHE_LOCK = threading.Lock()
+
+
+def load_amap_config(config_path=None):
+    path = Path(config_path) if config_path else LOCAL_AMAP_CONFIG
+    local = {}
+    if path.exists():
+        try:
+            local = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"无法读取高德地图本地配置：{path}（{exc}）") from exc
+    key = os.environ.get("AMAP_JS_KEY", "").strip() or str(local.get("amap_js_key", "")).strip()
+    security_code = os.environ.get("AMAP_SECURITY_CODE", "").strip() or str(local.get("amap_security_code", "")).strip()
+    return key, security_code
+
+
+def load_community_locations(path=LOCAL_COMMUNITY_LOCATIONS):
+    path = Path(path)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_community_location(item, path=LOCAL_COMMUNITY_LOCATIONS):
+    required = ["key", "district", "business_area", "community", "name", "lng", "lat"]
+    if any(item.get(field) in (None, "") for field in required):
+        raise ValueError("小区坐标信息不完整")
+    normalized = {
+        "district": str(item["district"]),
+        "business_area": str(item["business_area"]),
+        "community": str(item["community"]),
+        "name": str(item["name"]),
+        "address": str(item.get("address") or ""),
+        "lng": float(item["lng"]),
+        "lat": float(item["lat"]),
+        "query": str(item.get("query") or ""),
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with LOCATION_CACHE_LOCK:
+        values = load_community_locations(path)
+        values[str(item["key"])] = normalized
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(values, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        temporary.replace(path)
+    return normalized
 
 
 def ensure_data():
@@ -96,6 +149,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.send_json(self.service.search_communities(parsed.query))
             if parsed.path == "/api/community":
                 return self.send_json(self.service.community_detail(parsed.query))
+            if parsed.path == "/api/community-heatmap":
+                return self.send_json(self.service.community_heatmap(parsed.query))
+            if parsed.path == "/api/community-locations":
+                return self.send_json({"locations": load_community_locations()})
             if parsed.path == "/api/map-config":
                 configured = bool(self.amap_js_key and self.amap_security_code)
                 return self.send_json({
@@ -113,14 +170,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
 
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path != "/api/community-location":
+                return self.send_json({"error": "接口不存在"}, status=404)
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 64_000:
+                return self.send_json({"error": "请求内容无效"}, status=400)
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            saved = save_community_location(payload)
+            return self.send_json({"saved": True, "location": saved})
+        except (ValueError, json.JSONDecodeError) as exc:
+            self.send_json({"error": str(exc)}, status=400)
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, status=500)
+
 
 def main():
     ensure_data()
     from analytics import AnalyticsService
 
     DashboardHandler.service = AnalyticsService()
-    DashboardHandler.amap_js_key = os.environ.get("AMAP_JS_KEY", "").strip()
-    DashboardHandler.amap_security_code = os.environ.get("AMAP_SECURITY_CODE", "").strip()
+    DashboardHandler.amap_js_key, DashboardHandler.amap_security_code = load_amap_config()
     host = os.environ.get("BEIJING_HOUSE_HOST", "127.0.0.1")
     port = int(os.environ.get("BEIJING_HOUSE_PORT", "8876"))
     server = ThreadingHTTPServer((host, port), DashboardHandler)

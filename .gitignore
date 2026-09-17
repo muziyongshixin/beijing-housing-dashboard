@@ -5,7 +5,15 @@ __pycache__/
 .venv/
 venv/
 artifacts/
+.codex_work/
+output/
+outputs/
 小红书帖子/
 北京房价小红书帖子-可发布版.zip
 北京成交数据.xlsx
+*.xlsx
+/transactions.sqlite3
 data/transactions.sqlite3
+data/build_meta.local.json
+data/community_locations.local.json
+/config/amap.local.json
