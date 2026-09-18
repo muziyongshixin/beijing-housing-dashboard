@@ -5,15 +5,29 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
 
 const root=fileURLToPath(new URL('../docs/',import.meta.url));
+test('published HTML and worker imports carry matching content versions',()=>{
+  const version=name=>createHash('sha256').update(readFileSync(resolve(root,name))).digest('hex').slice(0,16);
+  for(const name of ['index.html','admin.html']){
+    const html=readFileSync(resolve(root,name),'utf8');
+    const assets=[...html.matchAll(/(?:src|href)="\.\/([^"?]+\.(?:js|css))(?:\?v=([a-f0-9]+))?"/g)];
+    assert.ok(assets.length>0);
+    for(const [,asset,hash]of assets)assert.equal(hash,version(asset),asset);
+  }
+  for(const [file,child]of [['pages-client.js','pages-worker.js'],['pages-worker.js','pages-data.js']])
+    assert.ok(readFileSync(resolve(root,file),'utf8').includes(`./${child}?v=${version(child)}`));
+});
 test('worker initializes real public SQLite, queues requests and survives invalid methods',async()=>{
   let serial=0;const pending=new Map(),progress=[];
   const context=vm.createContext({console,URL,URLSearchParams,TextDecoder,TextEncoder,Response,
     setTimeout,clearTimeout,WorkerGlobalScope:class{},location:{href:'https://example.test/housing/pages-worker.js'},
-    fetch:async input=>{
+    fetch:async (input,options)=>{
       const url=new URL(input,'https://example.test/housing/pages-worker.js');
       assert.equal(url.origin,'https://example.test');
+      if(url.pathname.endsWith('/meta.json'))assert.equal(options.cache,'no-store');
+      if(url.pathname.endsWith('.sqlite3')){assert.equal(options.cache,'no-cache');assert.match(url.searchParams.get('v'),/^[a-f0-9]{64}$/);}
       const path=resolve(root,url.pathname.replace(/^\/housing\//,''));
       assert.ok(path.startsWith(root));
       const bytes=readFileSync(path);return new Response(bytes,{headers:{'content-type':path.endsWith('.wasm')?'application/wasm':'application/octet-stream','content-length':String(bytes.length)}});
@@ -21,7 +35,7 @@ test('worker initializes real public SQLite, queues requests and survives invali
     postMessage:r=>{if(r.progress!==undefined){progress.push(r.progress);return;}const p=pending.get(r.id);pending.delete(r.id);r.error?p.reject(Error(r.error)):p.resolve(structuredClone(r.value));}
   });
   context.self=context;
-  context.importScripts=(...paths)=>paths.forEach(path=>vm.runInContext(readFileSync(resolve(root,path),'utf8'),context,{filename:path}));
+  context.importScripts=(...paths)=>paths.forEach(path=>vm.runInContext(readFileSync(resolve(root,path.split('?')[0]),'utf8'),context,{filename:path}));
   vm.runInContext(readFileSync(resolve(root,'pages-worker.js'),'utf8'),context);
   const call=(method,params='')=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});context.onmessage({data:{id,method,params}});});
   const initializing=call('initialize');

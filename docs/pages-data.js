@@ -147,10 +147,13 @@
   }
 
   async function initialize(progress) {
-    meta = await fetch("data/meta.json").then(response => response.json());
+    const metadataResponse = await fetch("data/meta.json", {cache: "no-store"});
+    if (!metadataResponse.ok) throw new Error(`数据目录加载失败：${metadataResponse.status}`);
+    meta = await metadataResponse.json();
     progress?.("首次打开需加载 31MB 成交数据库…");
     const SQL = await initSqlJs({ locateFile: file => `vendor/${file}` });
-    const response = await fetch(meta.pages.database);
+    const databaseVersion = meta.pages.database_sha256 || `${meta.date_max}-${meta.cleaning.kept_rows}`;
+    const response = await fetch(`${meta.pages.database}?v=${encodeURIComponent(databaseVersion)}`, {cache: "no-cache"});
     if (!response.ok) throw new Error(`成交数据库加载失败：${response.status}`);
     const total = Number(response.headers.get("content-length")) || meta.pages.database_bytes;
     let bytes;
@@ -170,6 +173,11 @@
       bytes = new Uint8Array(await response.arrayBuffer());
     }
     db = new SQL.Database(bytes);
+    const actual = query("SELECT COUNT(*) n, MAX(sale_date) last FROM transactions")[0];
+    if (actual.n !== meta.cleaning.kept_rows || dateText(actual.last) !== meta.date_max) {
+      db.close(); db = null;
+      throw new Error("数据版本不一致，请刷新页面重试。");
+    }
     progress?.("数据已加载，正在计算…");
     return meta;
   }

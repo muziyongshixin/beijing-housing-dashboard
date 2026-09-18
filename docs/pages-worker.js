@@ -1,6 +1,6 @@
 /* Public snapshot analytics only; no private rows, sessions or credentials. */
 self.window=self;
-importScripts('./vendor/sql-wasm.js','./pages-data.js');
+importScripts('./vendor/sql-wasm.js','./pages-data.js?v=37c7babe97fcee5c');
 let queue=Promise.resolve();
 self.onmessage=({data:{id,method,params}})=>{
   queue=queue.then(async()=>{

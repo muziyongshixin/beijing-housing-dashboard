@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fail a release if public artifacts or tracked private paths violate the free boundary."""
 import json
+import hashlib
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -21,6 +22,7 @@ def check(root=ROOT):
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "公开数据库损坏"
         assert db.execute("SELECT COUNT(*) FROM communities WHERE last_date>20250831").fetchone()[0] == 0
     meta = json.loads((root / "docs/data/meta.json").read_text())
+    assert meta['pages']['database_sha256'] == hashlib.sha256((root / 'docs/data/transactions.sqlite3').read_bytes()).hexdigest(), '公开数据库版本哈希不一致'
     assert meta["date_max"] <= "2025-08-31" and meta["cleaning"]["kept_rows"] == count
     assert all(month <= "2025-08" for month in meta.get("monthly_counts", {}))
     assert not {"source", "source_counts", "merge_status_counts"} & meta.keys(), "包含私有源元数据"

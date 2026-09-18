@@ -9,7 +9,9 @@ codes.  This keeps the browser database comfortably below GitHub's file limit.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -206,6 +208,20 @@ def validate_public_artifact(directory: Path) -> None:
         raise ValueError("拒绝发布：发现私有元数据")
 
 
+def version_assets(directory: Path) -> None:
+    """Version the full entrypoint/worker chain so returning users cannot mix releases."""
+    def version(name):
+        return hashlib.sha256((directory / name).read_bytes()).hexdigest()[:16]
+    worker = directory / "pages-worker.js"
+    worker.write_text(worker.read_text().replace("'./pages-data.js'", f"'./pages-data.js?v={version('pages-data.js')}'"))
+    client = directory / "pages-client.js"
+    client.write_text(client.read_text().replace("'./pages-worker.js'", f"'./pages-worker.js?v={version('pages-worker.js')}'"))
+    for name in ("index.html", "admin.html"):
+        path = directory / name
+        path.write_text(re.sub(r'((?:src|href)="\./)([^"?]+\.(?:js|css))(")',
+            lambda m: f'{m[1]}{m[2]}?v={version(m[2])}{m[3]}', path.read_text()))
+
+
 def main() -> None:
     global OUTPUT, OUTPUT_DB
     if os.environ.get("PAGES_CUTOFF_DATE", PAID_FROM) != PAID_FROM or os.environ.get("ALLOW_PRIVATE_PAGES_EXPORT"):
@@ -229,10 +245,12 @@ def main() -> None:
                 export_locations(source, OUTPUT / "data/community-locations.json")
                 target.commit()
                 target.execute("VACUUM")
-            metadata["pages"] = {"edition": "static-wasm", "database": "data/transactions.sqlite3", "database_bytes": OUTPUT_DB.stat().st_size}
+            metadata["pages"] = {"edition": "static-wasm", "database": "data/transactions.sqlite3", "database_bytes": OUTPUT_DB.stat().st_size,
+                                 "database_sha256": hashlib.sha256(OUTPUT_DB.read_bytes()).hexdigest()}
             metadata["public_snapshot"] = {"cutoff_exclusive": PAID_FROM, "note": "免费快照含整个 2025 年 8 月；静态站点不能强制试用额度。"}
             (OUTPUT / "data/meta.json").write_text(json.dumps(metadata, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             validate_public_artifact(OUTPUT)
+            version_assets(OUTPUT)
             # Preserve domain settings. All generated files are validated before replacing any.
             for source_path in OUTPUT.rglob("*"):
                 if source_path.is_file():
