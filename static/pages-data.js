@@ -44,6 +44,10 @@
   }
 
   function configFrom(params) {
+    for (const key of ["end_month", "base_start", "base_end"]) {
+      const value = text(params, key);
+      if (value && (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value) || value > meta.max_month)) throw new Error("日期超出免费快照范围");
+    }
     const endMonth = text(params, "end_month", meta.default_end_month);
     const window = integer(params, "window", 6, 1, 24);
     const compare = ["adjacent", "yoy", "custom"].includes(text(params, "compare", "adjacent")) ? text(params, "compare") : "adjacent";
@@ -276,7 +280,9 @@
     const rolling = months.map(month => {
       const start = shiftMonth(month, -(config.window - 1));
       const sample = rows.filter(row => monthText(row.sale_month) >= start && monthText(row.sale_month) <= month);
-      return { month, price: finite(metricValue(sample.map(row => row.unit_price), config.metric)), sample_count: sample.length };
+      const listing = sample.filter(row => row.listing_price > 0 && row.area > 0);
+      return { month, price: finite(metricValue(sample.map(row => row.unit_price), config.metric)), sample_count: sample.length,
+        listing_price: finite(metricValue(listing.map(row => row.listing_price * 10000 / row.area), config.metric)), listing_sample_count: listing.length };
     });
     const current = rows.filter(row => monthText(row.sale_month) >= config.current_start && monthText(row.sale_month) <= config.current_end);
     const base = rows.filter(row => monthText(row.sale_month) >= config.base_start && monthText(row.sale_month) <= config.base_end);
@@ -296,10 +302,16 @@
       transactions: rows.slice().reverse().map(row => ({
         sale_date: dateText(row.sale_date), layout: row.layout, orientation: row.orientation, floor: row.floor,
         area: row.area, listing_price: row.listing_price, sale_price: row.sale_price, unit_price: row.unit_price,
-        cycle_days: row.cycle_days, url: `https://bj.ke.com/chengjiao/${row.source_code}.html`,
+        listing_unit_price: row.listing_price > 0 && row.area > 0 ? row.listing_price * 10000 / row.area : null,
+        cycle_days: row.cycle_days, url: /^\d{12}$/.test(String(row.source_code)) ? `https://bj.ke.com/chengjiao/${row.source_code}.html` : "",
       })),
     };
   }
 
-  window.DashboardData = { initialize, searchCommunities, analyze, trend, communityDetail };
+  async function communityHeatmap(params) {
+    const query = new URLSearchParams(params); query.set("level", "community"); query.set("limit", "500");
+    const result = await analyze(query);
+    return {config:result.config, summary:result.summary, rows:result.rows};
+  }
+  window.DashboardData = { initialize, searchCommunities, analyze, trend, communityDetail, communityHeatmap };
 })();

@@ -1,0 +1,16 @@
+{
+  "name": "beijing-housing-access-tests",
+  "private": true,
+  "scripts": {
+    "build:cloud": "esbuild static/cloud-entry.mjs --bundle --minify --supported:template-literal=false --format=iife --outfile=static/cloud.js",
+    "test:ui": "node --test --test-concurrency=1 --test-timeout=30000 tests/product.test.mjs tests/access_ui.test.mjs tests/location_cache.test.mjs tests/ranking_ui.test.mjs tests/analytics_ui.test.mjs tests/admin_ui.test.mjs",
+    "test:permissions": "node --test --test-concurrency=1 --test-timeout=30000 tests/supabase_permissions.test.mjs",
+    "test:pages": "node --test --test-concurrency=1 --test-timeout=60000 tests/pages_worker.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "@supabase/supabase-js": "^2.99.2",
+    "esbuild": "^0.27.4",
+    "jsdom": "^26.1.0"
+  }
+}

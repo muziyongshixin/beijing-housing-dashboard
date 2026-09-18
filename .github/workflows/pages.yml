@@ -23,6 +23,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: |
+          npm ci --ignore-scripts
+          python -m pip install -r requirements.txt
+      - name: Run regression tests
+        run: |
+          npm run test:ui
+          npm run test:permissions
+          npm run test:pages
+          python -m unittest discover -s tests
+      - name: Guard public data boundary
+        run: python3 scripts/check_public_release.py
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload site

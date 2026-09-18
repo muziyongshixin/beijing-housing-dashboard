@@ -1,0 +1,37 @@
+project_id = "beijing-housing-dashboard"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 200
+
+[db]
+port = 54322
+major_version = 17
+
+[auth]
+enabled = true
+site_url = "https://liyongzhi.xyz/beijing-housing-dashboard/"
+additional_redirect_urls = ["http://127.0.0.1:18876/"]
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+double_confirm_changes = true
+otp_length = 8
+otp_expiry = 600
+
+[auth.email.template.magic_link]
+subject = "北京房价研究站 · 登录验证码"
+content_path = "./supabase/templates/email-otp.html"
+
+[auth.email.template.confirmation]
+subject = "北京房价研究站 · 邮箱验证"
+content_path = "./supabase/templates/email-otp.html"
+
+# Remote SMTP secrets/settings are maintained in the dashboard.
+# CLI 2.117.0 pushes only explicitly declared fields; review config diff first.

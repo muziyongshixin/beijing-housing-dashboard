@@ -111,6 +111,17 @@ class QueryConfig:
 
     @classmethod
     def from_params(cls, params: dict, meta: dict) -> "QueryConfig":
+        for key in ("end_month", "base_start", "base_end"):
+            value = get_text(params, key)
+            if value:
+                try:
+                    parsed = date.fromisoformat(value + "-01")
+                    if parsed.strftime("%Y-%m") != value:
+                        raise ValueError()
+                except ValueError:
+                    raise ValueError("月份格式必须为 YYYY-MM") from None
+                if value > meta["date_max"][:7]:
+                    raise PermissionError("所选月份超出当前权限可查看的数据范围，请先解锁新数据")
         end_month = get_text(params, "end_month", meta.get("default_end_month") or last_complete_month(meta["date_max"]))
         window = get_int(params, "window", 6, 1, 24)
         compare = get_text(params, "compare", "adjacent")

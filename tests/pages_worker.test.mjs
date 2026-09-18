@@ -1,0 +1,52 @@
+// Execute the real public WASM analytics in a worker-like VM (not a browser test).
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const root=fileURLToPath(new URL('../docs/',import.meta.url));
+test('worker initializes real public SQLite, queues requests and survives invalid methods',async()=>{
+  let serial=0;const pending=new Map(),progress=[];
+  const context=vm.createContext({console,URL,URLSearchParams,TextDecoder,TextEncoder,Response,
+    setTimeout,clearTimeout,WorkerGlobalScope:class{},location:{href:'https://example.test/housing/pages-worker.js'},
+    fetch:async input=>{
+      const url=new URL(input,'https://example.test/housing/pages-worker.js');
+      assert.equal(url.origin,'https://example.test');
+      const path=resolve(root,url.pathname.replace(/^\/housing\//,''));
+      assert.ok(path.startsWith(root));
+      const bytes=readFileSync(path);return new Response(bytes,{headers:{'content-type':path.endsWith('.wasm')?'application/wasm':'application/octet-stream','content-length':String(bytes.length)}});
+    },
+    postMessage:r=>{if(r.progress!==undefined){progress.push(r.progress);return;}const p=pending.get(r.id);pending.delete(r.id);r.error?p.reject(Error(r.error)):p.resolve(structuredClone(r.value));}
+  });
+  context.self=context;
+  context.importScripts=(...paths)=>paths.forEach(path=>vm.runInContext(readFileSync(resolve(root,path),'utf8'),context,{filename:path}));
+  vm.runInContext(readFileSync(resolve(root,'pages-worker.js'),'utf8'),context);
+  const call=(method,params='')=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});context.onmessage({data:{id,method,params}});});
+  const initializing=call('initialize');
+  const analyzing=call('analyze','level=district&limit=500');
+  const meta=await initializing,result=await analyzing;
+  assert.equal(meta.date_max,'2025-08-31');assert.equal(meta.cleaning.kept_rows,445034);
+  assert.ok(progress.some(p=>p.includes('数据已加载')));
+  assert.ok(result.rows.length>3);assert.ok(result.rows.length<=500);assert.equal(result.config.limit,500);
+  assert.ok(result.rows.every(r=>r.current_volume>=10&&r.base_volume>=10));
+  await assert.rejects(call('unknown'),/Unknown calculation/);
+  const trend=await call('trend');assert.ok(trend.points.length>0);
+  const communities=await call('searchCommunities','q=阳光南里');assert.ok(communities.results.length);
+  const item=communities.results[0];
+  const details=await call('communityDetail',new URLSearchParams({district:item.district,business_area:item.business_area,community:item.community}).toString());
+  assert.ok(details.transactions.length);assert.ok(details.transactions.every(t=>t.sale_date<='2025-08-31'));
+});
+
+test('worker client routes concurrent responses, progress, and loading errors',async()=>{
+  let worker;class TestWorker{constructor(url){assert.equal(url,'./pages-worker.js');worker=this;}messages=[];postMessage(m){this.messages.push(m);}}
+  const context=vm.createContext({Worker:TestWorker,window:{}});
+  vm.runInContext(readFileSync(new URL('../static/pages-client.js',import.meta.url),'utf8'),context);
+  const data=context.window.DashboardData,progress=[];
+  const initialization=data.initialize(v=>progress.push(v)),analysis=data.analyze(new URLSearchParams('limit=500'));
+  worker.onmessage({data:{id:1,progress:'50%'}});worker.onmessage({data:{id:2,value:{rows:[]}}});worker.onmessage({data:{id:1,value:{ready:true}}});
+  assert.deepEqual(progress,['50%']);assert.equal((await initialization).ready,true);assert.deepEqual(await analysis,{rows:[]});
+  assert.equal(worker.messages[1].params,'limit=500');
+  const failure=data.trend(new URLSearchParams());worker.onerror();await assert.rejects(failure,/后台计算加载失败/);await assert.rejects(data.analyze(),/后台计算加载失败/);
+});

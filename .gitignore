@@ -17,3 +17,10 @@ data/transactions.sqlite3
 data/build_meta.local.json
 data/community_locations.local.json
 /config/amap.local.json
+/.private/
+/.env
+/.env.*
+*.enc
+/supabase/.temp/
+/supabase/.branches/
+/node_modules/
