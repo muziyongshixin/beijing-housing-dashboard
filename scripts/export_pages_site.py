@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import hashlib
+import gzip
 import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -247,9 +249,15 @@ def main() -> None:
                 target.execute("VACUUM")
             metadata["pages"] = {"edition": "static-wasm", "database": "data/transactions.sqlite3", "database_bytes": OUTPUT_DB.stat().st_size,
                                  "database_sha256": hashlib.sha256(OUTPUT_DB.read_bytes()).hexdigest()}
+            compressed = gzip.compress(OUTPUT_DB.read_bytes(), compresslevel=6, mtime=0)
+            (OUTPUT / 'data/transactions.sqlite3.gz').write_bytes(compressed)
+            metadata['pages']['database_gzip'] = {'path':'data/transactions.sqlite3.gz', 'bytes':len(compressed), 'sha256':hashlib.sha256(compressed).hexdigest()}
             metadata["public_snapshot"] = {"cutoff_exclusive": PAID_FROM, "note": "免费快照含整个 2025 年 8 月；静态站点不能强制试用额度。"}
             (OUTPUT / "data/meta.json").write_text(json.dumps(metadata, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            subprocess.run(['node',str(ROOT / 'scripts/build_fast_pages.mjs'),str(OUTPUT)],check=True)
             validate_public_artifact(OUTPUT)
+            from check_public_release import check_fast
+            check_fast(OUTPUT, json.loads((OUTPUT / "data/meta.json").read_text()))
             version_assets(OUTPUT)
             # Preserve domain settings. All generated files are validated before replacing any.
             for source_path in OUTPUT.rglob("*"):

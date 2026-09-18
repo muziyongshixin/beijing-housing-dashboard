@@ -16,7 +16,7 @@ const users = {
 };
 before(async () => {
   await db.exec(`
-    create role anon; create role authenticated;
+    create role anon; create role authenticated; create role service_role;
     create schema auth;
     create table auth.users(id uuid primary key, email text, email_confirmed_at timestamptz, is_anonymous boolean);
     create function auth.uid() returns uuid language sql stable as
@@ -27,6 +27,8 @@ before(async () => {
   await db.exec(await readFile(new URL('../supabase/migrations/202609170001_account_entitlements.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../supabase/migrations/202609170002_catalog_and_read_limits.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../supabase/migrations/202609170003_admin_and_view_quotas.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/202609180004_map_proxy_limits.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/202609180005_map_counter_rls.sql', import.meta.url), 'utf8'));
   for (const [name, id] of Object.entries(users)) {
     await db.query('insert into auth.users values ($1,$2,$3,$4)',
       [id, `${name}@example.test`, name === 'unverified' ? null : '2026-09-01', name === 'anonymous']);
@@ -62,6 +64,18 @@ const records = (name, c, date = null, id = null, size = 200) => asUser(name,
   'select public.housing_new_transactions($1,$2,$3,$4,$5,$6) as result', ['测试区','测试商圈',c,date,id,size]);
 const redeem = (name, token) => asUser(name, 'select public.housing_redeem($1) as result', [token]);
 const token = 'bj_' + 'a'.repeat(43);
+
+test('map quota RPC is service-only and caps per-client requests',async()=>{
+  const sql='select public.housing_map_allow($1) as result',hash='a'.repeat(64);
+  await assert.rejects(asUser('alice',sql,[hash]),/permission denied/);
+  await assert.rejects(asUser('alice',sql,[hash],'anon'),/permission denied/);
+  assert.equal(await asUser('alice',sql,[null],'service_role'),false);
+  for(let i=0;i<60;i++)assert.equal(await asUser('alice',sql,[hash],'service_role'),true);
+  assert.equal(await asUser('alice',sql,[hash],'service_role'),false);
+  const period=Math.floor(Date.now()/86400000);
+  await db.query("update housing_private.map_proxy_limits set hits=10000 where bucket='day' and period=$1",[period]);
+  assert.equal(await asUser('alice',sql,['b'.repeat(64)],'service_role'),false);
+});
 
 test('anon, anonymous auth and unverified emails have no private access', async () => {
   await assert.rejects(asUser('', 'select public.housing_access() as result', [], 'anon'), /permission denied/);

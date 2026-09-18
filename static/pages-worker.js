@@ -1,15 +1,15 @@
 /* Public snapshot analytics only; no private rows, sessions or credentials. */
 self.window=self;
-importScripts('./vendor/sql-wasm.js','./pages-data.js');
-let queue=Promise.resolve();
+importScripts('./pages-data.js');
+let ready;
 self.onmessage=({data:{id,method,params}})=>{
-  queue=queue.then(async()=>{
+  (async()=>{
     try{
       if(!['initialize','analyze','trend','communityHeatmap','communityDetail','searchCommunities'].includes(method))throw Error('Unknown calculation');
-      const value=method==='initialize'
-        ?await DashboardData.initialize(message=>postMessage({id,progress:message}))
-        :await DashboardData[method](new URLSearchParams(params));
+      if(!ready)ready=DashboardData.initialize(message=>postMessage({id:method==='initialize'?id:0,progress:message})).catch(error=>{ready=null;throw error;});
+      const meta=await ready;
+      const value=method==='initialize'?meta:await DashboardData[method](new URLSearchParams(params));
       postMessage({id,value});
     }catch(e){postMessage({id,error:e.message||String(e)});}
-  });
+  })();
 };

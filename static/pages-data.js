@@ -2,6 +2,43 @@
 (function () {
   let db = null;
   let meta = null;
+  const packs = new Map();
+  const calculations = new Map();
+  let progressHandler, databaseLoading;
+  const versioned = (path, version) => `${path}?v=${encodeURIComponent(version)}`;
+  // All cache artifacts here contain public history only. Never cache Supabase responses.
+  async function readBytes(path, {timeout=20000, cache="force-cache", progress}={}) {
+    for (let attempt=0; attempt<2; attempt++) {
+      const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),timeout);
+      try {
+        const response=await fetch(path,{cache,signal:controller.signal});
+        if(!response.ok)throw Error(`数据请求失败（${response.status}）`);
+        const reader=response.body?.getReader(), chunks=[];let loaded=0;
+        const total=Number(response.headers.get('content-length'));
+        if(!reader)return new Uint8Array(await response.arrayBuffer());
+        while(true){const {done,value}=await reader.read();if(done)break;chunks.push(value);loaded+=value.length;progress?.(loaded,total);}
+        const bytes=new Uint8Array(loaded);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return bytes;
+      } catch(error) {
+        if(attempt)throw Error(error.name==='AbortError'?'数据加载超时，请重试；小区查询和默认概览无需完整数据库。':error.message);
+        progressHandler?.('网络较慢，正在重试数据请求…');
+      } finally {clearTimeout(timer);}
+    }
+  }
+  async function unpack(bytes) {
+    if(bytes[0]===31&&bytes[1]===139){
+      if(typeof DecompressionStream==='undefined')throw Error('浏览器不支持解压，请升级浏览器。');
+      return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+    }
+    return bytes;
+  }
+  async function pack(ref) {
+    if(!packs.has(ref.path)){
+      const pending=readBytes(versioned(ref.path,ref.sha256)).then(unpack).then(bytes=>JSON.parse(new TextDecoder().decode(bytes)));
+      packs.set(ref.path,pending);pending.catch(()=>packs.delete(ref.path));
+      if(packs.size>20)packs.delete(packs.keys().next().value);
+    }
+    return packs.get(ref.path);
+  }
 
   const text = (params, key, fallback = "") => String(params.get(key) ?? fallback).trim();
   const integer = (params, key, fallback, min, max) => Math.max(min, Math.min(max, Number.parseInt(text(params, key, fallback), 10) || fallback));
@@ -50,7 +87,7 @@
     }
     const endMonth = text(params, "end_month", meta.default_end_month);
     const window = integer(params, "window", 6, 1, 24);
-    const compare = ["adjacent", "yoy", "custom"].includes(text(params, "compare", "adjacent")) ? text(params, "compare") : "adjacent";
+    const compare = ["adjacent", "yoy", "custom"].includes(text(params, "compare", "adjacent")) ? text(params, "compare", "adjacent") : "adjacent";
     const currentStart = shiftMonth(endMonth, -(window - 1));
     let baseStart, baseEnd;
     if (compare === "yoy") {
@@ -64,7 +101,7 @@
       baseEnd = shiftMonth(currentStart, -1);
       baseStart = shiftMonth(baseEnd, -(window - 1));
     }
-    const metric = ["median", "mean", "p30", "p60", "min", "max"].includes(text(params, "metric", "median")) ? text(params, "metric") : "median";
+    const metric = ["median", "mean", "p30", "p60", "min", "max"].includes(text(params, "metric", "median")) ? text(params, "metric", "median") : "median";
     return {
       end_month: endMonth, window, compare, base_start: baseStart, base_end: baseEnd,
       current_start: currentStart, current_end: endMonth, metric,
@@ -147,44 +184,50 @@
   }
 
   async function initialize(progress) {
-    const metadataResponse = await fetch("data/meta.json", {cache: "no-store"});
-    if (!metadataResponse.ok) throw new Error(`数据目录加载失败：${metadataResponse.status}`);
-    meta = await metadataResponse.json();
-    progress?.("首次打开需加载 31MB 成交数据库…");
-    const SQL = await initSqlJs({ locateFile: file => `vendor/${file}` });
-    const databaseVersion = meta.pages.database_sha256 || `${meta.date_max}-${meta.cleaning.kept_rows}`;
-    const response = await fetch(`${meta.pages.database}?v=${encodeURIComponent(databaseVersion)}`, {cache: "no-cache"});
-    if (!response.ok) throw new Error(`成交数据库加载失败：${response.status}`);
-    const total = Number(response.headers.get("content-length")) || meta.pages.database_bytes;
-    let bytes;
-    if (response.body && total) {
-      const reader = response.body.getReader(), chunks = [];
-      let loaded = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value); loaded += value.length;
-        progress?.(`正在加载成交数据库 ${Math.round(loaded / total * 100)}%`);
-      }
-      bytes = new Uint8Array(loaded);
-      let offset = 0;
-      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    } else {
-      bytes = new Uint8Array(await response.arrayBuffer());
-    }
-    db = new SQL.Database(bytes);
-    const actual = query("SELECT COUNT(*) n, MAX(sale_date) last FROM transactions")[0];
-    if (actual.n !== meta.cleaning.kept_rows || dateText(actual.last) !== meta.date_max) {
-      db.close(); db = null;
-      throw new Error("数据版本不一致，请刷新页面重试。");
-    }
-    progress?.("数据已加载，正在计算…");
+    progressHandler=progress;progress?.('正在读取轻量数据目录…');
+    meta=JSON.parse(new TextDecoder().decode(await readBytes('data/meta.json',{cache:'no-store'})));
+    progress?.('目录已就绪 · 小区按需加载，无需下载整库');
     return meta;
+  }
+
+  async function ensureDatabase() {
+    if(db)return;
+    if(!databaseLoading)databaseLoading=(async()=>{
+      progressHandler?.('此自定义筛选需加载完整计算数据，首次准备中…');
+      if(typeof initSqlJs==='undefined')importScripts('./vendor/sql-wasm.js');
+      const SQL=await initSqlJs({locateFile:file=>`vendor/${file}`});
+      const compressed=typeof DecompressionStream!=='undefined'&&meta.pages.database_gzip;
+      const ref=compressed||{path:meta.pages.database,sha256:meta.pages.database_sha256};
+      const bytes=await unpack(await readBytes(versioned(ref.path,ref.sha256),{timeout:90000,progress:(loaded,total)=>progressHandler?.(`正在准备自定义计算数据 ${total?Math.round(loaded/total*100)+'%':(loaded/1048576).toFixed(1)+' MB'} · 仅首次需要`)}));
+      const candidate=new SQL.Database(bytes);
+      const [[count,last]]=candidate.exec('SELECT COUNT(*),MAX(sale_date) FROM transactions')[0].values;
+      if(count!==meta.cleaning.kept_rows||dateText(last)!==meta.date_max){candidate.close();throw Error('数据版本不一致，请刷新页面重试。');}
+      db=candidate;progressHandler?.('完整计算数据已就绪 · 后续查询复用缓存');
+    })().finally(()=>{databaseLoading=null;});
+    return databaseLoading;
+  }
+
+  function presetKey(config) {
+    const c=config;
+    if(c.end_month!==meta.default_end_month||c.metric!=='median'||![3,6,12].includes(c.window)||!['adjacent','yoy'].includes(c.compare)||c.business_area!=='全部'||c.rooms!=='全部'||c.area_min!==10||c.area_max!==500||c.min_current!==10||c.min_base!==10||c.min_total!==25||c.min_active_months!==3)return null;
+    return `${c.window}-${c.compare}`;
+  }
+  async function cachedAnalysis(config) {
+    const key=presetKey(config),ref=meta.pages.fast?.presets[key];if(!ref)return null;
+    const p=await pack(ref),base=p[config.level],matches=r=>config.district==='全部'||r.district===config.district;
+    const candidates=base.candidates.filter(matches),eligible=base.rows.filter(matches);
+    const rows=eligible.slice().sort((a,b)=>{const x=a[config.sort],y=b[config.sort];if(x==null)return y==null?0:1;if(y==null)return-1;return(config.direction==='desc'?-1:1)*(x-y);}).slice(0,config.limit);
+    return {...base,config,rows,summary:{candidate_count:candidates.length,eligible_count:eligible.length,returned_count:rows.length},candidates:undefined};
   }
 
   async function searchCommunities(params) {
     const q = text(params, "q");
     if (!q) return { query: "", results: [] };
+    if(meta.pages.fast){
+      const catalog=await pack(meta.pages.fast.catalog),rank=r=>r.community===q?0:r.community.startsWith(q)?1:2;
+      return {query:q,results:catalog.filter(r=>r.community.toLowerCase().includes(q.toLowerCase())).sort((a,b)=>rank(a)-rank(b)||b.transaction_count-a.transaction_count||b.last_date.localeCompare(a.last_date)).slice(0,integer(params,'limit',12,1,30)).map(({id,shard,...r})=>r)};
+    }
+    await ensureDatabase();
     const rows = query(`
       SELECT d.name district, b.name business_area, c.name community, c.transaction_count,
              c.first_date, c.last_date FROM communities c
@@ -195,8 +238,20 @@
     return { query: q, results: rows.map(row => ({ ...row, first_date: dateText(row.first_date), last_date: dateText(row.last_date) })) };
   }
 
-  async function analyze(params) {
+  async function analyze(params, building=false) {
+    if(building)return computeAnalysis(params,true);
+    const key=JSON.stringify(configFrom(params));
+    if(!calculations.has(key)){
+      const result=computeAnalysis(params);calculations.set(key,result);
+      result.catch(()=>calculations.delete(key));
+      if(calculations.size>12)calculations.delete(calculations.keys().next().value);
+    }
+    return calculations.get(key);
+  }
+  async function computeAnalysis(params, building=false) {
     const config = configFrom(params);
+    if(!building){const cached=await cachedAnalysis(config);if(cached)return cached;}
+    await ensureDatabase();
     const current = periodRows(config, config.current_start, config.current_end);
     const base = periodRows(config, config.base_start, config.base_end);
     const benchmarkCurrent = periodRows(config, config.current_start, config.current_end, false);
@@ -228,7 +283,7 @@
       const av = a[sortKey], bv = b[sortKey];
       if (av == null) return 1; if (bv == null) return -1;
       return ascending ? av - bv : bv - av;
-    }).slice(0, config.limit);
+    }).slice(0, building ? Infinity : config.limit);
 
     const mapKeys = ["map_district"];
     const mapCurrent = periodRows({ ...config, district: "全部", business_area: "全部" }, config.current_start, config.current_end);
@@ -249,12 +304,15 @@
         base_area: finite(metricValue(benchmarkBase.map(row => row.area), "median")),
       },
       summary: { candidate_count: merged.length, eligible_count: merged.filter(row => row.eligible).length, returned_count: rows.length },
-      rows, map: mapRows,
+      rows:building?merged.filter(row=>row.eligible):rows, map: mapRows, ...(building?{candidates:merged.map(r=>({district:r.district,business_area:r.business_area,community:r.community}))}:{}),
     };
   }
 
   async function trend(params) {
     const config = configFrom(params);
+    const key=presetKey(config),ref=meta.pages.fast?.presets[key],level=text(params,'trend_level','city'),name=text(params,'trend_name','北京');
+    if(ref&&!(level==='district'&&config.district!=='全部'&&config.district!==name)){const p=await pack(ref),scope=config.district!=='全部'?config.district:level==='district'?name:'全部';if(level!=='community'&&p.trends[scope])return{...p.trends[scope],level,name};}
+    await ensureDatabase();
     const start = meta.date_min.slice(0, 7) > shiftMonth(config.end_month, -47) ? meta.date_min.slice(0, 7) : shiftMonth(config.end_month, -47);
     const selection = { level: text(params, "trend_level", "city"), name: text(params, "trend_name", "北京") };
     const rows = periodRows(config, start, config.end_month, true, selection.level === "city" ? null : selection);
@@ -270,7 +328,13 @@
   async function communityDetail(params) {
     const config = configFrom(params);
     const district = text(params, "district"), businessArea = text(params, "business_area"), community = text(params, "community");
-    const rows = query(`
+    let rows;
+    if(meta.pages.fast){
+      const catalog=await pack(meta.pages.fast.catalog),entry=catalog.find(r=>r.district===district&&r.business_area===businessArea&&r.community===community);
+      if(!entry)throw Error('未找到该小区的成交记录');
+      const data=await pack(meta.pages.fast.shards[entry.shard]);
+      rows=(data.communities[entry.id]||[]).map(row=>Object.fromEntries(data.columns.map((key,i)=>[key,row[i]])));
+    }else{await ensureDatabase();rows = query(`
       SELECT t.sale_date, t.sale_month, l.name layout, o.name orientation, f.name floor,
              t.area / 100.0 area, t.listing_price / 100.0 listing_price, t.sale_price / 100.0 sale_price,
              t.unit_price, t.cycle_days, t.source_code
@@ -278,7 +342,7 @@
       JOIN business_areas b ON b.id=c.business_area_id JOIN districts d ON d.id=b.district_id
       JOIN layouts l ON l.id=t.layout_id JOIN orientations o ON o.id=t.orientation_id JOIN floors f ON f.id=t.floor_id
       WHERE d.name=? AND b.name=? AND c.name=? ORDER BY t.sale_date
-    `, [district, businessArea, community]);
+    `, [district, businessArea, community]);}
     if (!rows.length) throw new Error("未找到该小区的成交记录");
     const months = monthRange(monthText(rows[0].sale_month), monthText(rows[rows.length - 1].sale_month));
     const monthly = months.map(month => {
@@ -322,4 +386,5 @@
     return {config:result.config, summary:result.summary, rows:result.rows};
   }
   window.DashboardData = { initialize, searchCommunities, analyze, trend, communityDetail, communityHeatmap };
+  if(self.HOUSING_BUILD_CACHE)window.DashboardData.buildAnalysis=params=>analyze(params,true);
 })();

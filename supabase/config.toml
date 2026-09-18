@@ -35,3 +35,6 @@ content_path = "./supabase/templates/email-otp.html"
 
 # Remote SMTP secrets/settings are maintained in the dashboard.
 # CLI 2.117.0 pushes only explicitly declared fields; review config diff first.
+
+[functions.amap-proxy]
+verify_jwt = false

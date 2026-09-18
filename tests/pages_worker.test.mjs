@@ -19,15 +19,16 @@ test('published HTML and worker imports carry matching content versions',()=>{
   for(const [file,child]of [['pages-client.js','pages-worker.js'],['pages-worker.js','pages-data.js']])
     assert.ok(readFileSync(resolve(root,file),'utf8').includes(`./${child}?v=${version(child)}`));
 });
-test('worker initializes real public SQLite, queues requests and survives invalid methods',async()=>{
-  let serial=0;const pending=new Map(),progress=[];
-  const context=vm.createContext({console,URL,URLSearchParams,TextDecoder,TextEncoder,Response,
+test('worker serves presets and community shards without loading SQLite, with custom fallback',async()=>{
+  let serial=0;const pending=new Map(),progress=[],fetched=[],imports=[];
+  const context=vm.createContext({console,URL,URLSearchParams,TextDecoder,TextEncoder,Response,Blob,Uint8Array,AbortController,DecompressionStream,
     setTimeout,clearTimeout,WorkerGlobalScope:class{},location:{href:'https://example.test/housing/pages-worker.js'},
     fetch:async (input,options)=>{
       const url=new URL(input,'https://example.test/housing/pages-worker.js');
+      fetched.push(url.pathname);
       assert.equal(url.origin,'https://example.test');
       if(url.pathname.endsWith('/meta.json'))assert.equal(options.cache,'no-store');
-      if(url.pathname.endsWith('.sqlite3')){assert.equal(options.cache,'no-cache');assert.match(url.searchParams.get('v'),/^[a-f0-9]{64}$/);}
+      if(url.pathname.endsWith('.gz')){assert.equal(options.cache,'force-cache');assert.match(url.searchParams.get('v'),/^[a-f0-9]{64}$/);}
       const path=resolve(root,url.pathname.replace(/^\/housing\//,''));
       assert.ok(path.startsWith(root));
       const bytes=readFileSync(path);return new Response(bytes,{headers:{'content-type':path.endsWith('.wasm')?'application/wasm':'application/octet-stream','content-length':String(bytes.length)}});
@@ -35,14 +36,14 @@ test('worker initializes real public SQLite, queues requests and survives invali
     postMessage:r=>{if(r.progress!==undefined){progress.push(r.progress);return;}const p=pending.get(r.id);pending.delete(r.id);r.error?p.reject(Error(r.error)):p.resolve(structuredClone(r.value));}
   });
   context.self=context;
-  context.importScripts=(...paths)=>paths.forEach(path=>vm.runInContext(readFileSync(resolve(root,path.split('?')[0]),'utf8'),context,{filename:path}));
+  context.importScripts=(...paths)=>paths.forEach(path=>{imports.push(path);vm.runInContext(readFileSync(resolve(root,path.split('?')[0]),'utf8'),context,{filename:path});});
   vm.runInContext(readFileSync(resolve(root,'pages-worker.js'),'utf8'),context);
   const call=(method,params='')=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});context.onmessage({data:{id,method,params}});});
   const initializing=call('initialize');
   const analyzing=call('analyze','level=district&limit=500');
   const meta=await initializing,result=await analyzing;
   assert.equal(meta.date_max,'2025-08-31');assert.equal(meta.cleaning.kept_rows,445034);
-  assert.ok(progress.some(p=>p.includes('数据已加载')));
+  assert.ok(progress.some(p=>p.includes('无需下载整库')));
   assert.ok(result.rows.length>3);assert.ok(result.rows.length<=500);assert.equal(result.config.limit,500);
   assert.ok(result.rows.every(r=>r.current_volume>=10&&r.base_volume>=10));
   await assert.rejects(call('unknown'),/Unknown calculation/);
@@ -51,6 +52,15 @@ test('worker initializes real public SQLite, queues requests and survives invali
   const item=communities.results[0];
   const details=await call('communityDetail',new URLSearchParams({district:item.district,business_area:item.business_area,community:item.community}).toString());
   assert.ok(details.transactions.length);assert.ok(details.transactions.every(t=>t.sale_date<='2025-08-31'));
+  assert.ok(!fetched.some(p=>p.includes('sqlite3')||p.includes('wasm')));
+  assert.ok(!imports.some(p=>p.includes('wasm')));
+  const before=fetched.length;
+  await call('communityDetail',new URLSearchParams({district:item.district,business_area:item.business_area,community:item.community,metric:'p30'}).toString());
+  assert.equal(fetched.length,before,'same community reuses its shard');
+  const custom=await call('analyze','metric=mean&level=district');
+  assert.equal(custom.config.metric,'mean');
+  assert.equal(fetched.filter(p=>p.endsWith('transactions.sqlite3.gz')).length,1);
+  await call('analyze','metric=p30&district=朝阳');assert.equal(fetched.filter(p=>p.endsWith('transactions.sqlite3.gz')).length,1);
 });
 
 test('worker client routes concurrent responses, progress, and loading errors',async()=>{

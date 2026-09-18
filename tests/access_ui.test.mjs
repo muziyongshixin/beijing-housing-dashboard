@@ -8,7 +8,7 @@ function fixture(options={}){const d=new JSDOM(html,{url:'http://localhost',runS
   const q=id=>w.document.getElementById(id);w.$=q;w.state={community:null,meta:{max_month:'2025-08',min_month:'2018-04',cleaning:{kept_rows:1}}};
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};w.HTMLElement.prototype.scrollIntoView=function(){};
   w.getParams=()=>new URLSearchParams('window=6&metric=median');w.fmtNumber=String;w.init=async()=>{};w.renderCommunity=()=>{q('transactionBody').textContent=w.state.community.transactions.map(r=>r.sale_date).join(',');};
-  w.fetchJSON=async()=>({config:{window:6,metric:'median',compare:'adjacent'},transactions:[row],summary:{last_date:'2025-08-31'}});
+  w.fetchJSON=async url=>String(url).includes('/api/communities')?{results:options.emptySearch?[]:[item]}:({config:{window:6,metric:'median',compare:'adjacent'},transactions:[row],summary:{last_date:'2025-08-31'}});
   w.HousingCloud={latestMonth:'2026-08',communityHistory,client:{auth:{getSession:async()=>({data:{session}}),onAuthStateChange:()=>{},signOut:async()=>{session=null;return{};},signInWithOtp:async()=>({}),verifyOtp:async()=>{session={user:{email:'test@example.test'}};return{};}}},rpc:async(name,args)=>{
     if(name==='housing_access')return getAccess();if(name==='housing_claim_trial'){claims++;selected.push({...item,community:args.p_community});return{ok:true};}
     if(name==='housing_view_community')return{transactions:[{...row,id:1,sale_date:'2026-08-29'}]};return[];}};
@@ -37,6 +37,15 @@ test('a late private-data response after logout cannot repaint the chart',async(
 });
 test('public queries work if the cloud bundle is missing or session lookup stalls',async()=>{
   for(const options of [{missingCloud:true},{slowAuth:true}]){const f=fixture(options);await new Promise(r=>setImmediate(r));assert.match(f.q('cleaningSummary').textContent,/免费范围/);await f.w.openCommunity(item);assert.match(f.q('transactionBody').textContent,/2025/);f.d.window.close();}
+});
+test('free search returns immediately without waiting for cloud; missing names query catalog',async()=>{
+  for(const emptySearch of [false,true]){
+    const f=fixture({emptySearch});let calls=0;
+    try{f.w.HousingCloud.rpc=async name=>{if(name==='housing_search_catalog'){calls++;return[third];}return[];};
+      const result=await f.w.fetchJSON('/api/communities?q=甲');
+      assert.equal(calls,Number(emptySearch));assert.equal(result.results[0].community,emptySearch?'丙':'甲');
+    }finally{f.d.window.close();}
+  }
 });
 test('leaving a community clears the selection and old private chart state',async()=>{
   const f=fixture();await new Promise(r=>setImmediate(r));await f.w.openCommunity(item);f.w.closeCommunityView();assert.equal(f.w.testAccess.selection(),null);assert.equal(f.w.state.community,null);assert.equal(f.q('communityDetail').hidden,true);f.d.window.close();
