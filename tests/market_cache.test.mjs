@@ -11,7 +11,7 @@ before(async()=>{
  create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,is_anonymous boolean);
  create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
  grant usage on schema auth,public to anon,authenticated,service_role;`);
- for(const f of ['202609170001_account_entitlements.sql','202609170002_catalog_and_read_limits.sql','202609170003_admin_and_view_quotas.sql','202609220007_market_cache.sql'])await db.exec(await readFile(new URL('../supabase/migrations/'+f,import.meta.url),'utf8'));
+ for(const f of ['202609170001_account_entitlements.sql','202609170002_catalog_and_read_limits.sql','202609170003_admin_and_view_quotas.sql','202609220007_market_cache.sql','202609220009_market_private_pages.sql'])await db.exec(await readFile(new URL('../supabase/migrations/'+f,import.meta.url),'utf8'));
  await db.exec(`insert into auth.users values('${buyer}','buyer@example.test',now(),false),('${admin}','admin@example.test',now(),false),('${other}','other@example.test',now(),false);
  insert into housing_private.super_admins values('${admin}',true,now());
  insert into housing_private.communities(id,district,business_area,community) values(1,'测试','测试','甲');
@@ -42,6 +42,14 @@ test('failure, shared compute leases, null leases and missing cache never debit'
  const b=await begin(buyer,rid(1),key(1));assert.ok(b.lease);assert.notEqual(b.lease,a.lease);
  assert.equal((await rpc('housing_market_store',[key(1),a.lease,payload])).error,'compute_lease_expired');
  assert.equal((await rpc('housing_market_store',[key(1),b.lease,payload])).ok,true);assert.equal(await used(),0);
+});
+test('private market pages require the matching live lease and stay bounded',async()=>{
+ const request=rid(9),cache=key(9),started=await begin(admin,request,cache);assert.ok(started.lease);
+ const page=await rpc('housing_market_private_rows',[admin,started.lease,0,1,{history_start:'2025-09',history_end:'2026-08',area_min:10,area_max:500,rooms:'全部'}]);
+ assert.equal(page.rows.length,1);assert.equal(page.next_id,1);assert.deepEqual(page.rows[0].slice(0,4),['2026-08','测试','测试','甲']);
+ assert.equal((await rpc('housing_market_private_rows',[admin,rid(99),0,1,{history_start:'2025-09',history_end:'2026-08',area_min:10,area_max:500,rooms:'全部'}])).error,'compute_lease_expired');
+ await assert.rejects(rpc('housing_market_private_rows',[admin,started.lease,0,5001,{history_start:'2025-09',history_end:'2026-08',area_min:10,area_max:500,rooms:'全部'}]),/invalid_request/);
+ await rpc('housing_market_release',[started.lease]);
 });
 test('one report and one community share balance; retry at zero is free, a new request denied',async()=>{
  const first=await deliver(buyer,rid(1),key(1));assert.equal(first.charged,true);assert.equal(first.access.remaining_views,1);assert.deepEqual(first.report,payload);

@@ -9,7 +9,7 @@ async function fixture(options={}){
  const calls=[],urls=[];const handler=createMarketHandler({manifest,publicBase:'https://raw.githubusercontent.com/muziyongshixin/beijing-housing-dashboard/'+ 'a'.repeat(40)+'/docs/',
  authenticate:async()=>options.unauthorized?null:id,delay:async()=>{},
  fetchPublic:async url=>{urls.push(url);return new Response(options.corrupt?new Uint8Array([1]):contents[url.split('/docs/')[1]]);},
- rpc:async(name,args)=>{calls.push({name,args});if(options.fail===name)throw Error('synthetic_failure');if(name==='housing_market_meta')return {revision:1,latest_date:'2026-08-29'};if(name==='housing_market_begin')return options.hit?{ready:true}:options.pending?{pending:true}:{lease:id};if(name==='housing_compute_market')return {config:args.p_params};if(name==='housing_market_deliver')return {report:{},charged:true};return{ok:true};}});
+ rpc:async(name,args)=>{calls.push({name,args});if(options.fail===name)throw Error('synthetic_failure');if(name==='housing_market_meta')return {revision:1,latest_date:'2026-08-29'};if(name==='housing_market_begin')return options.hit?{ready:true}:options.pending?{pending:true}:{lease:id};if(name==='housing_market_private_rows')return {rows:[],next_id:null};if(name==='housing_market_deliver')return {report:{},charged:true};return{ok:true};}});
  const run=(body={params:{},request_id:id},options={})=>handler(new Request('https://example.test/market-report',{method:'POST',headers:{origin,Authorization:'Bearer synthetic'},body:JSON.stringify(body),...options}));return {run,calls,urls};
 }
 test('normalized keys ignore presentation, include data filters/version, preserve zero, pre-roll and custom ranges',async()=>{
@@ -26,11 +26,11 @@ test('unauthorized, oversized and unexpected params cannot fetch public source o
 });
 test('cold report uses only trusted verified snapshot and debits only after successful store',async()=>{
  const f=await fixture(),r=await f.run();assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'private, no-store');assert.equal(r.headers.get('access-control-allow-origin'),origin);
- assert.deepEqual(f.calls.map(x=>x.name),['housing_market_meta','housing_market_begin','housing_compute_market','housing_market_store','housing_market_deliver']);
- assert.equal(f.calls[2].args.p_history.rows.length,1);assert.equal(f.calls[3].args.p_payload.data_through,'2026-08-29');assert.ok(f.urls.every(u=>u.startsWith('https://raw.githubusercontent.com/')));
+ assert.deepEqual(f.calls.map(x=>x.name),['housing_market_meta','housing_market_begin','housing_market_private_rows','housing_market_store','housing_market_deliver']);
+ assert.equal(f.calls[2].args.p_lease,id);assert.equal(f.calls[3].args.p_payload.data_through,'2026-08-29');assert.equal(f.calls[3].args.p_payload.benchmark.current_volume,0);assert.ok(f.urls.every(u=>u.startsWith('https://raw.githubusercontent.com/')));
 });
 test('cache hits authorize/deliver without fetching history; integrity or SQL failure releases lease and never delivers',async()=>{
  const hit=await fixture({hit:true});await hit.run();assert.equal(hit.urls.length,0);assert.equal(hit.calls.at(-1).name,'housing_market_deliver');
- for(const options of [{corrupt:true},{fail:'housing_compute_market'},{fail:'housing_market_store'}]){const f=await fixture(options);assert.equal((await f.run()).status,400);assert.equal(f.calls.at(-1).name,'housing_market_release');assert.ok(!f.calls.some(c=>c.name==='housing_market_deliver'));}
+ for(const options of [{corrupt:true},{fail:'housing_market_private_rows'},{fail:'housing_market_store'}]){const f=await fixture(options);assert.equal((await f.run()).status,400);assert.equal(f.calls.at(-1).name,'housing_market_release');assert.ok(!f.calls.some(c=>c.name==='housing_market_deliver'));}
  const busy=await fixture({pending:true});assert.equal((await (await busy.run()).json()).error,'compute_busy');assert.equal(busy.urls.length,0);
 });

@@ -1,4 +1,5 @@
 import {ALGORITHM,normalizeParams,historicalMonths,cacheKey,digest} from './contract.mjs';
+import {createMarketAccumulator} from './compute.mjs';
 const ORIGINS=new Set(['https://liyongzhi.xyz','https://muziyongshixin.github.io','http://127.0.0.1:18876','http://127.0.0.1:18881']);
 export function createMarketHandler({authenticate,rpc,manifest,publicBase,fetchPublic=fetch,delay=ms=>new Promise(r=>setTimeout(r,ms))}){
   // Nothing from the request can change the public input URL, hashes, or private SQL.
@@ -38,8 +39,9 @@ export function createMarketHandler({authenticate,rpc,manifest,publicBase,fetchP
       if(begin.pending)throw Error('compute_busy');
       if(begin.lease){
         lease=begin.lease;
-        const communities=await read(manifest.catalog),rows=[],months=historicalMonths(params,manifest);
-        // Bound concurrency and keep only necessary old fields. Never persist source rows.
+        const communities=await read(manifest.catalog),months=historicalMonths(params,manifest),accumulator=createMarketAccumulator(params,communities);
+        // Bound concurrency, aggregate each verified chunk immediately and let
+        // the source rows be reclaimed.  Historical rows are never persisted.
         for(let offset=0;offset<months.length;offset+=4){
          const batch=months.slice(offset,offset+4);
          const chunks=await Promise.all(batch.map(m=>read(manifest.months[m])));
@@ -47,11 +49,18 @@ export function createMarketHandler({authenticate,rpc,manifest,publicBase,fetchP
           const m=batch[i],chunk=chunks[i];
           for(const row of chunk){
             if(row[0]!==m||m>'2025-08')throw Error('public_snapshot_mismatch');
-            if(row[2]>=params.area_min&&row[2]<=params.area_max&&(params.rooms==='全部'||row[6]===params.rooms))rows.push(row);
           }
+          accumulator.addPublic(chunk);
          }
         }
-        const report=await rpc('housing_compute_market',{p_params:params,p_history:{communities,rows}});
+        for(let after=0;;){
+          const page=await rpc('housing_market_private_rows',{p_uid:uid,p_lease:lease,p_after:after,p_page_size:5000,p_params:params});
+          if(page.error)throw Error(page.error);
+          accumulator.addPrivate(page.rows);
+          if(!page.next_id)break;
+          after=page.next_id;
+        }
+        const report=accumulator.finish();
         report.data_through=meta.latest_date;
         const stored=await rpc('housing_market_store',{p_key:key,p_lease:lease,p_payload:report});if(stored.error)throw Error(stored.error);lease=null;
       }
