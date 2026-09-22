@@ -1,0 +1,24 @@
+name: Verify administrator latest market
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify administrator report without sending email
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HOUSING_ADMIN_EMAIL: ${{ secrets.HOUSING_ADMIN_EMAIL }}
+        run: python3 scripts/check_admin_market.py
