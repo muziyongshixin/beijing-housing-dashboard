@@ -1,9 +1,14 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {JSDOM} from 'jsdom';
 import {communityHistory} from '../static/detail-math.mjs';
+import {createAuthStorage} from '../static/auth-storage.mjs';
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8'),script=await readFile(new URL('../static/access.js',import.meta.url),'utf8');
 const item={district:'测试',business_area:'测试',community:'甲'},second={...item,community:'乙'},third={...item,community:'丙'};
 const row={sale_date:'2025-08-31',area:80,unit_price:40000,sale_price:320,listing_price:350};
 function fixture(options={}){const d=new JSDOM(html,{url:'http://localhost',runScripts:'outside-only'}),w=d.window;let session=null,selected=[],claims=0,paidUntil=null;
+  let clock=Date.now(),touches=0;const sessionKey='housing-auth-mehbviiakjcbfckonzqk-v2';
+  const store=options.remembered?createAuthStorage({local:w.localStorage,session:w.sessionStorage,key:sessionKey,now:()=>clock}):null;
+  const login=()=>{session={access_token:'synthetic',refresh_token:'synthetic-refresh',user:{id:'test-user',email:'test@example.test'}};if(store){store.beginLogin(true);store.storage.setItem(sessionKey,JSON.stringify(session));store.finishLogin();}};
+  if(options.remembered)login();
   const getAccess=()=>({tier:session?(paidUntil?'paid':'registered'):'free',expires_at:paidUntil,trial_communities:[...selected],trial_limit:2});
   const q=id=>w.document.getElementById(id);w.$=q;w.state={community:null,meta:{max_month:'2025-08',min_month:'2018-04',cleaning:{kept_rows:1}}};
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};w.HTMLElement.prototype.scrollIntoView=function(){};
@@ -12,9 +17,33 @@ function fixture(options={}){const d=new JSDOM(html,{url:'http://localhost',runS
   w.HousingCloud={latestMonth:'2026-08',communityHistory,client:{auth:{getSession:async()=>({data:{session}}),onAuthStateChange:()=>{},signOut:async()=>{session=null;return{};},signInWithOtp:async()=>({}),verifyOtp:async()=>{session={user:{email:'test@example.test'}};return{};}}},rpc:async(name,args)=>{
     if(name==='housing_access')return getAccess();if(name==='housing_claim_trial'){claims++;selected.push({...item,community:args.p_community});return{ok:true};}
     if(name==='housing_view_community')return{transactions:[{...row,id:1,sale_date:'2026-08-29'}]};return[];}};
+  if(store){w.HousingCloud.sessionStore=store;const touch=store.touch;store.touch=()=>{touches++;return touch();};}
   if(options.missingCloud)delete w.HousingCloud;if(options.slowAuth)w.HousingCloud.client.auth.getSession=()=>new Promise(()=>{});
-  w.eval(script+'\nwindow.testAccess={setExpiry:value=>{accessState.expires_at=value;},selection:()=>currentSelection};');return{d,w,q,login:()=>{session={user:{email:'test@example.test'}};},paid:value=>{paidUntil=value;},claims:()=>claims};
+  w.eval(script+'\nwindow.testAccess={setExpiry:value=>{accessState.expires_at=value;},selection:()=>currentSelection,setActivity:value=>{activityUntil=value;}};');return{d,w,q,login,paid:value=>{paidUntil=value;},claims:()=>claims,store,sessionKey,touches:()=>touches,advance:ms=>{clock+=ms;}};
 }
+
+test('remembered account renders retention, recovers from network failure without another OTP, and expires locally',async()=>{
+  const f=fixture({remembered:true}),{w,q,store}=f;try{
+    await new Promise(r=>setImmediate(r));assert.equal(q('rememberLogin').checked,true);assert.match(q('sessionRememberStatus').textContent,/已记住此设备/);
+    let sends=0;w.HousingCloud.client.auth.signInWithOtp=async()=>{sends++;return{};};
+    const rpc=w.HousingCloud.rpc;w.HousingCloud.rpc=async()=>{throw Error('Failed to fetch');};
+    await w.checkAccess();assert.equal(q('emailLoginPanel').hidden,false);assert.ok(store.status().expiresAt);assert.match(q('loginStatus').textContent,/请勿反复发送验证码/);
+    w.HousingCloud.rpc=rpc;await w.checkAccess();assert.equal(q('emailLoginPanel').hidden,true);assert.equal(sends,0);assert.equal(q('loginStatus').textContent,'');
+    f.advance(7*864e5);await w.checkAccess();assert.equal(q('emailLoginPanel').hidden,false);assert.equal(store.status().expiresAt,null);
+  }finally{f.d.window.close();}
+});
+
+test('only foreground recent activity renews retention; cross-tab refresh does not clear a private chart but logout does',async()=>{
+  const f=fixture({remembered:true}),{w,q,store}=f;try{
+    await new Promise(r=>setImmediate(r));Object.defineProperty(w.document,'hidden',{value:false,configurable:true});
+    w.testAccess.setActivity(Date.now()+60000);await w.refreshAccess();const count=f.touches();assert.ok(count>0);
+    w.testAccess.setActivity(0);await w.refreshAccess();assert.equal(f.touches(),count);
+    Object.defineProperty(w.document,'hidden',{value:true,configurable:true});w.testAccess.setActivity(Date.now()+60000);await w.refreshAccess();assert.equal(f.touches(),count);
+    await w.requestLatest(item);await q('trialConfirm').onclick();assert.match(q('transactionBody').textContent,/2026/);
+    store.touch();w.dispatchEvent(new w.StorageEvent('storage',{key:f.sessionKey}));assert.match(q('transactionBody').textContent,/2026/);
+    store.clear();w.dispatchEvent(new w.StorageEvent('storage',{key:f.sessionKey+':epoch'}));assert.doesNotMatch(q('transactionBody').textContent,/2026/);assert.equal(q('emailLoginPanel').hidden,false);
+  }finally{f.d.window.close();}
+});
 test('anonymous history never consumes quota; verified unlock is explicit; third stays free; logout clears new rows',async()=>{
   const f=fixture(),{w,q}=f;await new Promise(r=>setImmediate(r));
   await w.openCommunity(item);assert.match(q('transactionBody').textContent,/2025-08-31/);assert.equal(f.claims(),0);
