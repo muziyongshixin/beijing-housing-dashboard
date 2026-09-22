@@ -31,6 +31,9 @@ test('proxy injects server secret, blocks redirects/reflection and never forward
   const r=await handler(request('/_AMapService/v3/place/text?key='+key+'&callback=cb',{Origin:'https://liyongzhi.xyz',Authorization:'Bearer private'}));
   assert.equal(r.status,200);assert.equal(target.host,'restapi.amap.com');assert.equal(target.searchParams.get('jscode'),secret);
   assert.equal(options.redirect,'error');assert.equal(options.headers.Authorization,undefined);
+  assert.match(r.headers.get('content-type'),/^application\/javascript/);
+  const telemetry=await handler(request('/_AMapService/v3/log/init?key='+key+'&callback=jsonp_123'));
+  assert.equal(telemetry.status,200);assert.match(telemetry.headers.get('content-type'),/^application\/javascript/);
   const reflected=createHandler({key,secret,allow:async()=>true,fetchUpstream:async()=>new Response(secret)});
   const error=await reflected(request('/_AMapService/v4/maps?key='+key));assert.equal(error.status,502);assert.ok(!(await error.text()).includes(secret));
 });

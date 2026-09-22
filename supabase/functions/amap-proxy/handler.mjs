@@ -4,6 +4,7 @@ const paths=new Map([
   ['/v4/maps','restapi.amap.com'],
   ['/v3/place/text','restapi.amap.com'],['/v3/place/detail','restapi.amap.com'],
   ['/v3/geocode/geo','restapi.amap.com'],['/v3/geocode/regeo','restapi.amap.com'],
+  ['/v3/log/init','restapi.amap.com'],
   ['/v4/map/styles','webapi.amap.com'],
 ]);
 export function createHandler({key,secret,allow,publicOrigin,fetchUpstream=fetch}) {

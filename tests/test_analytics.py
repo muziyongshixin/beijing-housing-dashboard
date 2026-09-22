@@ -5,9 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 from analytics import AnalyticsService, QueryConfig, last_complete_month, metric_value, month_shift
-from app import DashboardHandler, load_amap_config, load_community_locations, save_community_location
+from app import DashboardHandler, amap_response_content_type, load_amap_config, load_community_locations, save_community_location
 from scripts.build_database import declared_complete_month
 import pandas as pd
 
@@ -141,6 +142,15 @@ class AnalyticsIntegrationTests(unittest.TestCase):
 
 
 class MapConfigurationTests(unittest.TestCase):
+    def test_jsonp_proxy_response_is_javascript_even_if_upstream_sends_octet_stream(self):
+        parsed = urlparse('/_AMapService/v3/log/init?callback=jsonp_123')
+        self.assertEqual(
+            amap_response_content_type(parsed, 'application/octet-stream'),
+            'application/javascript; charset=utf-8',
+        )
+        invalid = urlparse('/_AMapService/v3/log/init?callback=alert(1)')
+        self.assertEqual(amap_response_content_type(invalid, 'application/octet-stream'), 'application/octet-stream')
+
     def test_map_configuration_defaults_to_disabled(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
             key, security_code = load_amap_config(Path(tmp) / "missing.json")

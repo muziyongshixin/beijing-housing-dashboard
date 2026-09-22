@@ -582,7 +582,9 @@ class AnalyticsService:
             return cached
         config = QueryConfig.from_params(params, self.meta)
         start = max(self.meta["date_min"][:7], month_shift(config.end_month, -47))
-        where, args = self._where(config, start, config.end_month)
+        # The first visible rolling point needs its preceding window, too.
+        history_start = month_shift(start, -(config.window - 1))
+        where, args = self._where(config, history_start, config.end_month)
         level = get_text(params, "trend_level", "city")
         name = get_text(params, "trend_name", "北京")
         if level == "district" and name:

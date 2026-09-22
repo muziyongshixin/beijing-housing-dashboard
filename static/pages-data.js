@@ -315,7 +315,7 @@
     await ensureDatabase();
     const start = meta.date_min.slice(0, 7) > shiftMonth(config.end_month, -47) ? meta.date_min.slice(0, 7) : shiftMonth(config.end_month, -47);
     const selection = { level: text(params, "trend_level", "city"), name: text(params, "trend_name", "北京") };
-    const rows = periodRows(config, start, config.end_month, true, selection.level === "city" ? null : selection);
+    const rows = periodRows(config, shiftMonth(start, -(config.window - 1)), config.end_month, true, selection.level === "city" ? null : selection);
     const points = monthRange(start, config.end_month).map(month => {
       const from = shiftMonth(month, -(config.window - 1));
       const windowRows = rows.filter(row => monthText(row.month) >= from && monthText(row.month) <= month);

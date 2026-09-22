@@ -255,6 +255,8 @@ def main() -> None:
             metadata["public_snapshot"] = {"cutoff_exclusive": PAID_FROM, "note": "免费快照含整个 2025 年 8 月；静态站点不能强制试用额度。"}
             (OUTPUT / "data/meta.json").write_text(json.dumps(metadata, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             subprocess.run(['node',str(ROOT / 'scripts/build_fast_pages.mjs'),str(OUTPUT)],check=True)
+            from build_public_history import build as build_public_history
+            build_public_history(OUTPUT)
             validate_public_artifact(OUTPUT)
             from check_public_release import check_fast
             check_fast(OUTPUT, json.loads((OUTPUT / "data/meta.json").read_text()))

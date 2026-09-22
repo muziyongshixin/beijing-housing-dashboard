@@ -5,6 +5,7 @@ import json
 import mimetypes
 import math
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -28,6 +29,7 @@ AMAP_SERVICE_PREFIX = "/_AMapService"
 LOCAL_AMAP_CONFIG = ROOT / "config" / "amap.local.json"
 LOCAL_COMMUNITY_LOCATIONS = ROOT / "data" / "community_locations.local.json"
 LOCATION_CACHE_LOCK = threading.Lock()
+AMAP_JSONP_CALLBACK = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
 
 
 def load_amap_config(config_path=None):
@@ -41,6 +43,14 @@ def load_amap_config(config_path=None):
     key = os.environ.get("AMAP_JS_KEY", "").strip() or str(local.get("amap_js_key", "")).strip()
     security_code = os.environ.get("AMAP_SECURITY_CODE", "").strip() or str(local.get("amap_security_code", "")).strip()
     return key, security_code
+
+
+def amap_response_content_type(parsed, upstream_content_type):
+    """AMap returns JSONP telemetry as octet-stream; browsers must execute it as JS."""
+    callback = parse_qs(parsed.query).get("callback", [""])[0]
+    if callback and AMAP_JSONP_CALLBACK.fullmatch(callback):
+        return "application/javascript; charset=utf-8"
+    return upstream_content_type or "application/json; charset=utf-8"
 
 
 def load_community_locations(path=LOCAL_COMMUNITY_LOCATIONS):
@@ -179,11 +189,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             with urlopen(request, timeout=15) as response:
                 body = response.read()
                 status = response.status
-                content_type = response.headers.get("Content-Type", "application/json; charset=utf-8")
+                content_type = amap_response_content_type(parsed, response.headers.get("Content-Type"))
         except HTTPError as exc:
             body = exc.read()
             status = exc.code
-            content_type = exc.headers.get("Content-Type", "application/json; charset=utf-8")
+            content_type = amap_response_content_type(parsed, exc.headers.get("Content-Type"))
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))

@@ -38,3 +38,6 @@ content_path = "./supabase/templates/email-otp.html"
 
 [functions.amap-proxy]
 verify_jwt = false
+
+[functions.market-report]
+verify_jwt = false

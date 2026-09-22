@@ -66,6 +66,40 @@ def check_fast(directory, meta):
     return allowed
 
 
+def check_history(directory, meta):
+    """Every server input is compared with the public DB, not trusted by filename."""
+    directory = Path(directory)
+    manifest_path = directory / 'data/history/manifest.json'
+    if not manifest_path.exists():
+        return set()  # Legacy test fixture without server-side monthly inputs.
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest['schema'] == 1 and manifest['through'] == '2025-08-31'
+    assert manifest['source_sha256'] == meta['pages']['database_sha256']
+    allowed = {'data/history/manifest.json'}
+    def read(ref):
+        path = ref['path']
+        assert path.startswith('data/history/') and '..' not in Path(path).parts and path not in allowed
+        allowed.add(path)
+        compressed = (directory / path).read_bytes()
+        assert len(compressed) == ref['bytes'] and hashlib.sha256(compressed).hexdigest() == ref['sha256']
+        raw = gzip.decompress(compressed)
+        assert len(raw) == ref['raw_bytes']
+        return json.loads(raw)
+    catalog = read(manifest['catalog'])
+    with sqlite3.connect((directory / 'data/transactions.sqlite3').as_uri()+'?mode=ro', uri=True) as db:
+        communities = db.execute('select c.id,d.name,b.name,c.name from communities c join business_areas b on b.id=c.business_area_id join districts d on d.id=b.district_id order by c.id').fetchall()
+        assert catalog == [list(r[1:]) for r in communities]
+        ids = {r[0]:i for i,r in enumerate(communities)}
+        expected = {}
+        for m,c,a,p,y,d,r in db.execute('select t.sale_month,t.community_id,t.area/100.0,t.unit_price,t.cycle_days,case when t.listing_price>0 then t.sale_price*1.0/t.listing_price-1 end,l.rooms from transactions t join layouts l on l.id=t.layout_id order by t.sale_month,t.community_id,t.sale_date'):
+            month=f'{str(m)[:4]}-{str(m)[4:]}'
+            expected.setdefault(month,[]).append([month,ids[c],a,p,y,d,r])
+    assert set(expected) == set(manifest['months'])
+    for month,ref in manifest['months'].items():
+        assert month <= '2025-08' and read(ref) == expected[month], 'History differs from free database'
+    return allowed
+
+
 def check(root=ROOT):
     root = Path(root)
     paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
@@ -93,6 +127,7 @@ def check(root=ROOT):
         assert 115.4 <= value["lng"] <= 117.6 and 39.4 <= value["lat"] <= 41.1
     allowed = {"index.html", "app.js", "location-cache.js", "access.js", "analytics.js", "admin.html", "admin.js", "admin.css", "pages-data.js", "pages-client.js", "pages-worker.js", "styles.css", "product.css", "product.js", "cloud.js", "beijing-districts.geojson", ".nojekyll", "CNAME", "data/meta.json", "data/community-locations.json", "data/transactions.sqlite3", "vendor/sql-wasm.js", "vendor/sql-wasm.wasm"}
     allowed.update(check_fast(root / "docs", meta))
+    allowed.update(check_history(root / 'docs', meta))
     for path in (root / "docs").rglob("*"):
         if path.is_symlink() or path.is_file() and path.relative_to(root / "docs").as_posix() not in allowed:
             raise ValueError("公开产物包含未审核文件：" + str(path))

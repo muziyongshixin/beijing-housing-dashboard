@@ -1,6 +1,6 @@
 /* Public snapshot analytics only; no private rows, sessions or credentials. */
 self.window=self;
-importScripts('./pages-data.js?v=3c4f7e2592f68dfd');
+importScripts('./pages-data.js?v=3595ddb00103e931');
 let ready;
 self.onmessage=({data:{id,method,params}})=>{
   (async()=>{

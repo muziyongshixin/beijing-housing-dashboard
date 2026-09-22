@@ -1,4 +1,4 @@
-const state = { meta:null, geo:null, result:null, trend:null, selectedTrend:{level:"city",name:"北京"}, community:null, communityPriceRange:null, communityLocationRequestId:0, searchTimer:null, amapConfig:null, amap:null, amapLoadPromise:null, communityMap:null, communityMarker:null, communityInfo:null, heatmapData:null, heatmapMap:null, heatmapCanvas:null, heatmapLocated:[], heatmapMarkers:[], heatmapLabels:[], heatmapInfo:null, heatmapColorScale:null, heatmapRequestId:0, heatmapEventsBound:false, heatmapDrawFrame:null };
+const state = { meta:null, geo:null, result:null, trend:null, selectedTrend:{level:"city",name:"北京"}, community:null, communityPriceRange:null, communityLocationRequestId:0, searchTimer:null, amapConfig:null, amap:null, amapLoadPromise:null, communityMap:null, communityMarker:null, communityInfo:null, heatmapData:null, heatmapMap:null, heatmapCanvas:null, heatmapLocated:[], heatmapMarkers:[], heatmapLabels:[], heatmapInfo:null, heatmapColorScale:null, heatmapRequestId:0, heatmapEventsBound:false, heatmapDrawFrame:null, marketMode:"free", premiumReport:null, premiumParams:"" };
 const $ = id => document.getElementById(id);
 const form = $("filterForm");
 const sortHelp = {
@@ -144,9 +144,43 @@ function renderCommunityPrice(){
 function renderTransactions(){const q=$("transactionSearch").value.trim().toLowerCase(),rows=state.community.transactions.filter(r=>!q||`${r.sale_date} ${r.layout} ${r.floor} ${r.orientation} ${r.source_name||""}`.toLowerCase().includes(q));$("transactionCountText").textContent=`显示 ${rows.length} / ${state.community.transactions.length} 笔`;$("transactionBody").innerHTML=rows.map(r=>{const source=escapeHTML(r.source_name||"来源未标注"),link=r.url?`<a href="${escapeHTML(r.url)}" target="_blank" rel="noreferrer">${source}</a>`:source,listing=Number(r.listing_price),sale=Number(r.sale_price),negotiation=Number.isFinite(listing)&&listing>0&&Number.isFinite(sale)?(listing-sale)/listing:null,gap=negotiation==null?null:listing-sale,negotiationClass=negotiation==null?"":negotiation>0?"negotiation-positive":negotiation<0?"negotiation-negative":"negotiation-flat",negotiationCell=negotiation==null?"—":`<span class="negotiation-rate ${negotiationClass}" title="挂牌 ${fmtNumber(listing,0)} 万 − 成交 ${fmtNumber(sale,0)} 万 = ${fmtNumber(gap,0)} 万">${fmtPercent(negotiation).replace("+","")}</span>`;return`<tr><td>${r.sale_date}</td><td>${escapeHTML(r.layout)}</td><td>${fmtNumber(r.area,1)}㎡</td><td>${fmtNumber(r.sale_price,0)} 万</td><td>${fmtPrice(r.unit_price)}</td><td>${r.listing_price==null?"—":fmtNumber(r.listing_price,0)+" 万"}</td><td>${negotiationCell}</td><td>${r.cycle_days==null?"—":r.cycle_days+" 天"}</td><td>${escapeHTML(r.floor)}<br><small>${escapeHTML(r.orientation)}</small></td><td>${link}</td></tr>`}).join("")}
 
 let analysisGeneration=0,trendGeneration=0;
+// These fields change how an already computed report is presented.  They are
+// deliberately not part of a paid-report identity: the report contains both
+// district and community candidates, so changing one of these must not cause
+// a second paid request.
+const MARKET_DISPLAY_PARAMS=new Set(["level","district","sort","direction","limit"]);
+function marketCalculationParams(value=getParams()){
+ const source=typeof value==="string"?new URLSearchParams(value):new URLSearchParams(value);
+ for(const key of MARKET_DISPLAY_PARAMS)if(key!=="district"||source.get("business_area")==="全部")source.delete(key);
+ if(source.get('compare')!=='custom'){source.delete('base_start');source.delete('base_end');}source.sort();
+ return source.toString();
+}
+function latestReportEnd(report){
+ const value=report?.data_through||report?.config?.current_end||report?.config?.end_month;
+ const match=String(value||"").match(/^\d{4}-\d{2}/);return match?.[0]||"";
+}
+function latestReportLabel(report){
+ const through=report?.data_through||report?.config?.data_through;
+ const end=latestReportEnd(report);
+ return through?`最新完整市场报告 · 数据截至 ${through}`:end?`最新完整市场报告 · 当前期截至 ${end}`:"最新完整市场报告";
+}
+function clearLatestMarketDOM(){
+ ["cityChange","cityPrice","currentVolume","volumeChange","monthlyVolume","monthlyVolumeBase","eligibleCount","candidateCount","rankingCount","rankingMetricHelp","rankingMetricLabel","rankingObjectLabel","volumePeriodSummary"].forEach(id=>{const node=$(id);if(node)node.textContent="—";});
+ ["map","trendChart","volumeChart","rankingBody"].forEach(id=>$(id)?.replaceChildren());
+ showHeatmapPlaceholder("公开市场热力图","正在切回公开市场数据…");
+ setHeatmapStatus("正在切回公开市场数据…");
+}
 function setAnalysisBusy(busy){$("analysisLoading").hidden=!busy;$("marketResults").classList.toggle("is-calculating",busy);$("marketResults").setAttribute("aria-busy",String(busy));$("marketResults").inert=busy;$("analyzeButton").disabled=busy;$("analyzeButton").querySelector(".button-spinner").hidden=!busy;$("analyzeButtonText").textContent=busy?"正在计算…":"应用设置并重新计算";$("analysisFeedback").textContent=busy?"正在计算，请稍候…":"";}
 const nextPaint=()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
 async function analyze(){
+ if(state.marketMode==="latest"){
+   const changed=state.premiumParams!==marketCalculationParams();
+   if(changed&&window.HousingMarketAccess?.isAdmin()){return window.requestLatestMarket?.(true);}
+   if(!changed&&state.premiumReport){renderLatestMarket(state.premiumReport,state.premiumParams);}
+   $("analysisFeedback").textContent=changed?"计算筛选已改变；请点击“查询最新报告”获取与当前条件一致的报告。":"最新报告已加载；排序、Top K、层级与区域下钻不会重新查询。";
+   $("analyzeButtonText").textContent=changed?"计算筛选已改变 · 查询最新报告":"当前为最新报告";
+   return;
+ }
  const generation=++analysisGeneration;const selectedTrend=$("district").value==="全部"?{level:"city",name:"北京"}:{level:"district",name:$("district").value};
  const p=getParams(),trendParams=new URLSearchParams(p);trendParams.set("trend_level",selectedTrend.level);trendParams.set("trend_name",selectedTrend.name);state.heatmapRequestId++;trendGeneration++;clearError();setAnalysisBusy(true);const start=performance.now();
  try{await nextPaint();if(generation!==analysisGeneration)return;
@@ -156,6 +190,55 @@ async function analyze(){
    setAnalysisBusy(false);$("analysisFeedback").textContent=`计算完成 · ${((performance.now()-start)/1000).toFixed(1)} 秒`;
  }catch(e){if(generation===analysisGeneration){setAnalysisBusy(false);showError(e);$("analysisFeedback").textContent=state.result?"计算失败，保留上次结果，请重试。":"计算失败，请检查网络后重试。";}}
 }
+function premiumRows(report){
+ const config={...report.config,level:$("level").value,sort:$("sort").value,direction:$("direction").value,district:$("district").value};
+ const all=config.level==="district"?(report.districts||[]):(report.communities||[]);
+ const district=$("district").value;
+ const scoped=config.level==="community"&&district!=="全部"?all.filter(r=>r.district===district):all;
+ const key=config.sort||"price_change",direction=config.direction||"asc";
+ return [...scoped].filter(r=>r.eligible).sort((a,b)=>{if(a[key]==null&&b[key]!=null)return 1;if(b[key]==null&&a[key]!=null)return -1;return (Number(a[key])-Number(b[key]))*(direction==='asc'?1:-1)||String(rowName(a)).localeCompare(String(rowName(b)),"zh-CN");});
+}
+function renderLatestMarket(report,params){
+ // Invalidate every outstanding free request before it has a chance to paint
+ // over the paid report.  This is also important when the user upgrades while
+ // a slow free heatmap/geocode request is in flight.
+ analysisGeneration++;trendGeneration++;state.heatmapRequestId++;
+ state.marketMode="latest";state.premiumReport=report;state.premiumParams=marketCalculationParams(params||getParams());
+ const config={...report.config,level:$("level").value,sort:$("sort").value,direction:$("direction").value,district:$("district").value};
+ const rows=premiumRows(report),all=config.level==="district"?(report.districts||[]):(report.communities||[]),scopedAll=config.level==="community"&&config.district!=="全部"?all.filter(r=>r.district===config.district):all;
+ state.result={config,benchmark:report.benchmark,summary:{eligible_count:rows.length,candidate_count:scopedAll.length},rows,map:report.map||report.districts||[]};
+ const trendKey=$("district").value==="全部"?"全部":$("district").value;
+ state.selectedTrend=trendKey==="全部"?{level:"city",name:"北京"}:{level:"district",name:trendKey};
+ state.trend=(report.trends||{})[trendKey]||(report.trends||{})["全部"]||{points:[]};
+ state.heatmapData={rows:(report.communities||[]).filter(r=>r.eligible&&(config.district==='全部'||r.district===config.district))};
+ const latestEnd=latestReportEnd(report);
+ if(latestEnd){$("endMonth").max=latestEnd;$("endMonth").value=report.config.end_month||report.config.current_end;}
+ setAnalysisBusy(false);
+ renderSummary();renderMap();renderRanking();renderTrend();refreshHeatmapPresentation();
+ if(activeMapConfig()?.configured)void renderLatestHeatmap();
+ $("marketRangeBadge").textContent=latestReportLabel(report);
+ $("marketAccessHint").textContent="当前显示已加载的最新完整报告；排序、Top K、区域下钻不会再次扣次。改变计算筛选后，请重新查询最新报告。";
+ $("analyzeButtonText").textContent="当前为最新报告";
+}
+async function renderLatestHeatmap(){
+ const rows=state.heatmapData?.rows||[];if(!rows.length)return;const requestId=++state.heatmapRequestId;try{const locations=await locationStore.ready();if(state.marketMode!=="latest"||requestId!==state.heatmapRequestId)return;state.heatmapColorScale=buildHeatmapColorScale(rows,heatmapMode().scale);renderHeatmapScale();await loadAmap();if(state.marketMode!=="latest"||requestId!==state.heatmapRequestId)return;createHeatmapMap(state.amap);const located=renderCommunityHeatmapLayers(rows,locations,{fit:true});setHeatmapStatus(heatmapCacheStatus(rows,located));}catch(e){if(state.marketMode==="latest"&&requestId===state.heatmapRequestId)setHeatmapStatus(`加载失败：${escapeHTML(e.message||String(e))}`,true)}}
+function clearLatestMarket(){
+ const wasLatest=state.marketMode==="latest"||state.premiumReport;
+ if(!wasLatest)return;
+ // Synchronous invalidation is intentional: late free analyze/trend/heatmap
+ // promises must be harmless before the free reload begins.
+ analysisGeneration++;trendGeneration++;state.heatmapRequestId++;
+ state.marketMode="free";state.premiumReport=null;state.premiumParams="";state.result=null;state.trend=null;state.selectedTrend={level:"city",name:"北京"};state.heatmapData=null;state.heatmapColorScale=null;state.heatmapLocated=[];
+ state.heatmapInfo?.close();state.heatmapInfo=null;state.heatmapMarkers=[];state.heatmapLabels=[];state.heatmapMap?.destroy();state.heatmapMap=null;state.heatmapCanvas=null;
+ if(state.heatmapDrawFrame)cancelAnimationFrame(state.heatmapDrawFrame);state.heatmapDrawFrame=null;
+ $("endMonth").max=state.meta?.default_end_month||"2025-08";$("endMonth").value=state.meta?.default_end_month||"2025-08";
+ for(const id of ['baseStart','baseEnd']){$(id).max=state.meta?.max_month||'2025-08';if($(id).value>'2025-08')$(id).value='2025-08';}
+ $("marketRangeBadge").textContent="公开市场范围 · 截至 2025-08-31";
+ $("marketAccessHint").textContent="免费市场数据截至 2025-08-31。最新完整市场报告需显式查询；小区与市场报告共用查看次数。";
+ $("analyzeButtonText").textContent="应用设置并重新计算";$("analysisFeedback").textContent="";
+ if(wasLatest)clearLatestMarketDOM();setAnalysisBusy(false);
+}
+window.HousingMarketUI={renderLatestMarket,clearLatestMarket,calculationParams:marketCalculationParams,showFree:()=>{window.HousingMarketAccess?.cancel();clearLatestMarket();return analyze();}};
 function renderSummary(){const b=state.result.benchmark,c=state.result.config,months=monthCount(c.current_start,c.current_end),baseMonths=monthCount(c.base_start,c.base_end);$("cityChange").textContent=fmtPercent(b.price_change);$("cityChange").className=tone(b.price_change);$("cityPrice").textContent=`${fmtPrice(b.base_price)} → ${fmtPrice(b.current_price)}`;$("currentVolume").textContent=`${fmtNumber(b.current_volume)} 套`;$("volumeChange").textContent=`基准期 ${fmtNumber(b.base_volume)} 套，变化 ${fmtPercent(b.volume_change)}`;$("monthlyVolume").textContent=`${fmtNumber(b.current_volume/months)} 套/月`;$("monthlyVolumeBase").textContent=`基准期 ${fmtNumber(b.base_volume/baseMonths)} 套/月`;$("eligibleCount").textContent=fmtNumber(state.result.summary.eligible_count);$("candidateCount").textContent=`共评估 ${fmtNumber(state.result.summary.candidate_count)} 个对象`}
 
 function projectGeo(fs,w,h,p=18){const cs=[],walk=v=>typeof v[0]==="number"?cs.push(v):v.forEach(walk);fs.forEach(f=>walk(f.geometry.coordinates));const xs=cs.map(c=>c[0]),ys=cs.map(c=>c[1]),a=Math.min(...xs),b=Math.max(...xs),c=Math.min(...ys),d=Math.max(...ys),s=Math.min((w-p*2)/(b-a),(h-p*2)/(d-c)),xo=(w-(b-a)*s)/2,yo=(h-(d-c)*s)/2;return([x,y])=>[xo+(x-a)*s,h-(yo+(y-c)*s)]}
@@ -217,17 +300,18 @@ function heatmapCacheStatus(rows,located,requests=0){
   return `<strong>${rows.length} 个小区符合门槛，已定位 ${located} 个。</strong> 坐标长期复用，仅重算涨跌颜色；本轮新增 POI 查询 ${requests} 次。${held?` ${held} 个失败结果在冷却期。`:""}${locationStore.paused()?" 高德服务异常，自动补全已暂停 15 分钟。":""}${locationPersistenceFailed?" 本地共享缓存未保存，仅当前浏览器复用。":""}`;
 }
 async function loadCommunityHeatmap(snapshot=null){
+ if(state.marketMode==="latest"&&state.premiumReport){return renderLatestHeatmap();}
  const requestId=++state.heatmapRequestId,cfg=activeMapConfig();if(!cfg?.configured){showHeatmapPlaceholder("需要配置高德地图","配置后显示底图；坐标将复用公共快照和浏览器缓存。");setHeatmapStatus("高德地图尚未配置。",true);return}
  if(!state.heatmapMap)showHeatmapPlaceholder("正在计算小区涨跌","优先读取坐标缓存，不重复查询已定位小区。");setHeatmapStatus("正在读取小区涨跌幅与坐标缓存…");
  try{const params=snapshot?new URLSearchParams(snapshot):getParams();params.set("limit","500");const[data,locations]=await Promise.all([fetchJSON(`/api/community-heatmap?${params}`),locationStore.ready()]);
- if(requestId!==state.heatmapRequestId)return;state.heatmapData=data;const rows=data.rows||[];state.heatmapColorScale=buildHeatmapColorScale(rows,heatmapMode().scale);renderHeatmapScale();await loadAmap();if(requestId!==state.heatmapRequestId)return;
+ if(state.marketMode!=="free"||requestId!==state.heatmapRequestId)return;state.heatmapData=data;const rows=data.rows||[];state.heatmapColorScale=buildHeatmapColorScale(rows,heatmapMode().scale);renderHeatmapScale();await loadAmap();if(state.marketMode!=="free"||requestId!==state.heatmapRequestId)return;
  createHeatmapMap(state.amap);const located=renderCommunityHeatmapLayers(rows,locations,{fit:true});
  setHeatmapStatus(rows.length?heatmapCacheStatus(rows,located):"当前筛选条件没有符合门槛的小区。");
  if(activeMapConfig()?.auto_geocode!==false)await fillMissingHeatmapLocations(rows,locations,requestId);
- }catch(e){if(requestId!==state.heatmapRequestId)return;if(!state.heatmapMap)showHeatmapPlaceholder("热力地图暂时不可用",e.message||String(e));setHeatmapStatus(`加载失败：${escapeHTML(e.message||String(e))}`,true)}
+ }catch(e){if(state.marketMode!=="free"||requestId!==state.heatmapRequestId)return;if(!state.heatmapMap)showHeatmapPlaceholder("热力地图暂时不可用",e.message||String(e));setHeatmapStatus(`加载失败：${escapeHTML(e.message||String(e))}`,true)}
 }
 
-async function loadTrend(){const generation=++trendGeneration,p=getParams(),selected={...state.selectedTrend};p.set("trend_level",selected.level);p.set("trend_name",selected.name);const trend=await fetchJSON(`/api/trend?${p}`);if(generation!==trendGeneration)return;state.trend=trend;renderTrend()}
+async function loadTrend(){if(state.marketMode==="latest"&&state.premiumReport){const name=state.selectedTrend.name==="北京"?"全部":state.selectedTrend.name;state.trend=state.premiumReport.trends?.[name]||state.premiumReport.trends?.["全部"]||{points:[]};renderTrend();return}const generation=++trendGeneration,p=getParams(),selected={...state.selectedTrend};p.set("trend_level",selected.level);p.set("trend_name",selected.name);const trend=await fetchJSON(`/api/trend?${p}`);if(generation!==trendGeneration)return;state.trend=trend;renderTrend()}
 function renderTrend(){$("trendTitle").textContent=`${state.selectedTrend.name}价格趋势`;$("volumeTitle").textContent=`${state.selectedTrend.name}每月成交量`;renderLineChart($("trendChart"),state.trend.points.filter(x=>x.price!=null).map(x=>({label:x.month,value:x.price})),"元/㎡");renderMarketVolume()}
 function renderLineChart(host,points,unit){if(!points.length){host.innerHTML='<p class="empty-state">当前条件没有可绘制的价格数据。</p>';return}const w=Math.max(320,host.clientWidth||620),h=390,m={t:24,r:18,b:48,l:w<480?54:68},vs=points.map(x=>x.value),min=Math.min(...vs),max=Math.max(...vs),pad=(max-min)*.1||1,x=i=>m.l+i*(w-m.l-m.r)/Math.max(1,points.length-1),y=v=>m.t+(max+pad-v)/(max-min+2*pad)*(h-m.t-m.b);let s=`<svg viewBox="0 0 ${w} ${h}" role="img">`;for(let i=0;i<=4;i++){const v=min-pad+(max-min+2*pad)*(4-i)/4,py=m.t+i*(h-m.t-m.b)/4;s+=`<line class="chart-grid" x1="${m.l}" y1="${py}" x2="${w-m.r}" y2="${py}"/><text class="chart-axis" x="${m.l-8}" y="${py+4}" text-anchor="end">${Math.round(v/1000)}k</text>`}s+=`<path class="chart-line" d="${points.map((p,i)=>`${i?"L":"M"}${x(i)},${y(p.value)}`).join(" ")}"/>`;const step=Math.max(1,Math.ceil(points.length/(w<480?4:7)));points.forEach((p,i)=>{s+=`<circle class="chart-dot" cx="${x(i)}" cy="${y(p.value)}" r="3.5"><title>${p.label} · ${fmtPrice(p.value)}</title></circle>`;if(i%step===0||i===points.length-1){const anchor=i===0?"start":i===points.length-1?"end":"middle";s+=`<text class="chart-axis" x="${x(i)}" y="${h-16}" text-anchor="${anchor}">${p.label}</text>`}});s+=`<text class="chart-axis" x="10" y="16">${unit}</text></svg>`;host.innerHTML=s}
 function renderMarketVolume(){const c=state.result.config,points=state.trend.points.map(x=>({label:x.month,value:x.volume,period:x.month>=c.current_start&&x.month<=c.current_end?"current":x.month>=c.base_start&&x.month<=c.base_end?"base":"other"})),current=points.filter(x=>x.period==="current").reduce((sum,x)=>sum+x.value,0),base=points.filter(x=>x.period==="base").reduce((sum,x)=>sum+x.value,0),change=base?current/base-1:null;renderBarChart($("volumeChart"),points,{unit:"套",colorByPeriod:true});$("volumePeriodSummary").innerHTML=`<strong>当前期 ${fmtNumber(current)} 套</strong><span>基准期 ${fmtNumber(base)} 套</span><small>变化 ${fmtPercent(change)}</small>`}
@@ -255,5 +339,7 @@ async function selectRankingRow(r){if(r.community){await openCommunity({district
 function resetForm(){$("endMonth").value=state.meta.default_end_month;$("window").value="6";$("compare").value="adjacent";$("metric").value="median";$("level").value="district";$("district").value="全部";updateBusinessAreas();$("rooms").value="全部";$("areaMin").value="10";$("areaMax").value="500";$("minCurrent").value="10";$("minBase").value="10";$("minTotal").value="25";$("minActiveMonths").value="3";$("rankingTopK").value="20";$("customTopKLabel").hidden=true;$("sort").value="price_change";$("direction").value="asc";$("customPeriod").hidden=true;updatePeriodPreview();analyze()}
 function bindHelp(){const popover=$("helpPopover"),show=button=>{const r=button.getBoundingClientRect(),width=280,left=Math.max(8,Math.min(innerWidth-width-8,r.left));popover.textContent=button.dataset.help;popover.hidden=false;popover.style.left=`${left}px`;popover.style.top=`${r.bottom+8+scrollY}px`},hide=()=>popover.hidden=true;document.querySelectorAll(".info-button").forEach(button=>{button.addEventListener("mouseenter",()=>show(button));button.addEventListener("mouseleave",hide);button.addEventListener("focus",()=>show(button));button.addEventListener("blur",hide);button.addEventListener("click",e=>{e.stopPropagation();show(button)})});document.addEventListener("click",hide)}
 
-$("communitySearchForm").onsubmit=e=>{e.preventDefault();searchCommunities()};$("communitySearch").oninput=()=>{clearTimeout(state.searchTimer);state.searchTimer=setTimeout(searchCommunities,220)};$("closeCommunity").onclick=()=>{$("communityDetail").hidden=true;$("marketSection").hidden=false;$("marketSection").scrollIntoView({behavior:"smooth"})};$("transactionSearch").oninput=()=>state.community&&renderTransactions();$("communityLocationForm").onsubmit=e=>{e.preventDefault();const query=$("communityLocationQuery").value.trim();if(query)locateCommunity(query,true)};$("mapSettingsButton").onclick=openMapSettings;$("closeMapSettings").onclick=()=>$("mapSettingsDialog").close();$("mapSettingsForm").onsubmit=e=>{e.preventDefault();if(state.amapConfig?.configured){$("mapSettingsDialog").close();renderCommunityLocation();loadCommunityHeatmap();return}const key=$("amapJsKey").value.trim(),securityCode=$("amapSecurityCode").value.trim();if(!key||!securityCode){alert("请同时填写 Web 端 Key 和安全密钥");return}localStorage.setItem("beijing-house-amap",JSON.stringify({key,securityCode}));resetAmap();setupMapSettings();$("mapSettingsDialog").close();state.community&&renderCommunityLocation();state.result&&loadCommunityHeatmap()};$("clearMapSettings").onclick=()=>{localStorage.removeItem("beijing-house-amap");$("amapJsKey").value="";$("amapSecurityCode").value="";resetAmap();setupMapSettings();$("mapSettingsDialog").close();state.community&&renderCommunityLocation();state.result&&loadCommunityHeatmap()};form.onsubmit=e=>{e.preventDefault();analyze()};$("compare").onchange=()=>{$("customPeriod").hidden=$("compare").value!=="custom";updatePeriodPreview()};["window","endMonth","baseStart","baseEnd"].forEach(id=>$(id).onchange=updatePeriodPreview);$("district").onchange=updateBusinessAreas;$("level").onchange=()=>{if($("level").value==="district"){$("district").value="全部";updateBusinessAreas()}};$("sort").onchange=analyze;$("direction").onchange=analyze;$("resetButton").onclick=resetForm;window.onresize=()=>{if(state.result){renderMap();renderLineChart($("trendChart"),state.trend.points.filter(x=>x.price!=null).map(x=>({label:x.month,value:x.price})),"元/㎡");renderMarketVolume();renderRanking();state.heatmapMap?.resize()}if(state.community){renderCommunityPrice();renderBarChart($("communityVolumeChart"),state.community.monthly.map(x=>({label:x.month,value:x.volume})),{unit:"套",average:state.community.summary.average_monthly_volume});state.communityMap?.resize()}};
+$("freeMarketButton").onclick=()=>window.HousingMarketUI.showFree();$("latestMarketButton").onclick=()=>window.requestLatestMarket?.();
+
+$("communitySearchForm").onsubmit=e=>{e.preventDefault();searchCommunities()};$("communitySearch").oninput=()=>{clearTimeout(state.searchTimer);state.searchTimer=setTimeout(searchCommunities,220)};$("closeCommunity").onclick=()=>{$("communityDetail").hidden=true;$("marketSection").hidden=false;$("marketSection").scrollIntoView({behavior:"smooth"})};$("transactionSearch").oninput=()=>state.community&&renderTransactions();$("communityLocationForm").onsubmit=e=>{e.preventDefault();const query=$("communityLocationQuery").value.trim();if(query)locateCommunity(query,true)};$("mapSettingsButton").onclick=openMapSettings;$("closeMapSettings").onclick=()=>$("mapSettingsDialog").close();$("mapSettingsForm").onsubmit=e=>{e.preventDefault();if(state.amapConfig?.configured){$("mapSettingsDialog").close();renderCommunityLocation();loadCommunityHeatmap();return}const key=$("amapJsKey").value.trim(),securityCode=$("amapSecurityCode").value.trim();if(!key||!securityCode){alert("请同时填写 Web 端 Key 和安全密钥");return}localStorage.setItem("beijing-house-amap",JSON.stringify({key,securityCode}));resetAmap();setupMapSettings();$("mapSettingsDialog").close();state.community&&renderCommunityLocation();state.result&&loadCommunityHeatmap()};$("clearMapSettings").onclick=()=>{localStorage.removeItem("beijing-house-amap");$("amapJsKey").value="";$("amapSecurityCode").value="";resetAmap();setupMapSettings();$("mapSettingsDialog").close();state.community&&renderCommunityLocation();state.result&&loadCommunityHeatmap()};form.onsubmit=e=>{e.preventDefault();analyze()};$("compare").onchange=()=>{$("customPeriod").hidden=$("compare").value!=="custom";updatePeriodPreview()};["window","endMonth","baseStart","baseEnd"].forEach(id=>$(id).onchange=updatePeriodPreview);$("district").onchange=()=>{updateBusinessAreas();if(state.marketMode==="latest")analyze()};$("level").onchange=()=>{if($("level").value==="district"){$("district").value="全部";updateBusinessAreas()}if(state.marketMode==="latest")analyze()};$("sort").onchange=analyze;$("direction").onchange=analyze;$("resetButton").onclick=resetForm;window.onresize=()=>{if(state.result){renderMap();renderLineChart($("trendChart"),state.trend.points.filter(x=>x.price!=null).map(x=>({label:x.month,value:x.price})),"元/㎡");renderMarketVolume();renderRanking();state.heatmapMap?.resize()}if(state.community){renderCommunityPrice();renderBarChart($("communityVolumeChart"),state.community.monthly.map(x=>({label:x.month,value:x.volume})),{unit:"套",average:state.community.summary.average_monthly_volume});state.communityMap?.resize()}};
 // access.js checks entitlements before calling init().

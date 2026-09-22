@@ -12,14 +12,15 @@ function fixture(options={}){const d=new JSDOM(html,{url:'http://localhost',runS
   const getAccess=()=>({tier:session?(paidUntil?'paid':'registered'):'free',expires_at:paidUntil,trial_communities:[...selected],trial_limit:2});
   const q=id=>w.document.getElementById(id);w.$=q;w.state={community:null,meta:{max_month:'2025-08',min_month:'2018-04',cleaning:{kept_rows:1}}};
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};w.HTMLElement.prototype.scrollIntoView=function(){};
-  w.getParams=()=>new URLSearchParams('window=6&metric=median');w.fmtNumber=String;w.init=async()=>{};w.renderCommunity=()=>{q('transactionBody').textContent=w.state.community.transactions.map(r=>r.sale_date).join(',');};
-  w.fetchJSON=async url=>String(url).includes('/api/communities')?{results:options.emptySearch?[]:[item]}:({config:{window:6,metric:'median',compare:'adjacent'},transactions:[row],summary:{last_date:'2025-08-31'}});
-  w.HousingCloud={latestMonth:'2026-08',communityHistory,client:{auth:{getSession:async()=>({data:{session}}),onAuthStateChange:()=>{},signOut:async()=>{session=null;return{};},signInWithOtp:async()=>({}),verifyOtp:async()=>{session={user:{email:'test@example.test'}};return{};}}},rpc:async(name,args)=>{
+  const marketCalls=[],publicRequests=[];w.getParams=()=>new URLSearchParams(`window=6&metric=median&end_month=${q('endMonth').value||'2025-08'}`);w.fmtNumber=String;w.init=async()=>{};w.renderCommunity=()=>{q('transactionBody').textContent=w.state.community.transactions.map(r=>r.sale_date).join(',');};
+  w.HousingMarketUI={calculationParams:p=>{const x=new URLSearchParams(p);for(const key of ['level','district','sort','direction','limit'])x.delete(key);return x.toString();},renderLatestMarket:(report,params)=>{w.state.marketMode='latest';w.state.report={report,params};},clearLatestMarket:()=>{w.state.marketMode='free';w.state.report=null;},showFree:()=>{w.HousingMarketAccess?.cancel();w.state.marketMode='free';}};
+  w.fetchJSON=async url=>{publicRequests.push(String(url));return String(url).includes('/api/communities')?{results:options.emptySearch?[]:[item]}:({config:{window:6,metric:'median',compare:'adjacent'},transactions:[row],summary:{last_date:'2025-08-31'}});};
+  w.HousingCloud={latestMonth:'2026-08',communityHistory,marketReport:async(params,requestId)=>{marketCalls.push({params,requestId});return{report:{config:{end_month:params.end_month||'2026-08'}},access:getAccess()};},client:{auth:{getSession:async()=>({data:{session}}),onAuthStateChange:()=>{},signOut:async()=>{session=null;return{};},signInWithOtp:async()=>({}),verifyOtp:async()=>{session={user:{email:'test@example.test'}};return{};}}},rpc:async(name,args)=>{
     if(name==='housing_access')return getAccess();if(name==='housing_claim_trial'){claims++;selected.push({...item,community:args.p_community});return{ok:true};}
     if(name==='housing_view_community')return{transactions:[{...row,id:1,sale_date:'2026-08-29'}]};return[];}};
   if(store){w.HousingCloud.sessionStore=store;const touch=store.touch;store.touch=()=>{touches++;return touch();};}
   if(options.missingCloud)delete w.HousingCloud;if(options.slowAuth)w.HousingCloud.client.auth.getSession=()=>new Promise(()=>{});
-  w.eval(script+'\nwindow.testAccess={setExpiry:value=>{accessState.expires_at=value;},selection:()=>currentSelection,setActivity:value=>{activityUntil=value;}};');return{d,w,q,login,paid:value=>{paidUntil=value;},claims:()=>claims,store,sessionKey,touches:()=>touches,advance:ms=>{clock+=ms;}};
+  w.eval(script+'\nwindow.testAccess={setExpiry:value=>{accessState.expires_at=value;},selection:()=>currentSelection,setActivity:value=>{activityUntil=value;}};');return{d,w,q,login,paid:value=>{paidUntil=value;},claims:()=>claims,store,sessionKey,touches:()=>touches,advance:ms=>{clock+=ms;},marketCalls,publicRequests};
 }
 
 test('remembered account renders retention, recovers from network failure without another OTP, and expires locally',async()=>{
@@ -106,4 +107,24 @@ test('admin bypasses codes; limited quota response updates display; uncertain ne
     await w.openCommunity(third);assert.doesNotMatch(q('transactionBody').textContent,/2026/);await w.openCommunity(third);assert.equal(requests[1],requests[2]);assert.notEqual(requests[0],requests[1]);
     await w.openCommunity(third);assert.notEqual(requests[2],requests[3]);
   }finally{f.d.window.close();}
+});
+test('paid login does not auto-charge a market report, while admin auto-loads the newest month',async()=>{
+ const f=fixture(),{w,q}=f;try{await new Promise(r=>setImmediate(r));f.login();f.paid(new Date(Date.now()+60000).toISOString());await w.refreshAccess();assert.equal(f.marketCalls.length,0);await w.requestLatestMarket();assert.equal(f.marketCalls.length,1);assert.equal(f.marketCalls[0].params.end_month,'2026-08');
+  const g=fixture();await new Promise(r=>setImmediate(r));g.login();const rpc=g.w.HousingCloud.rpc;g.w.HousingCloud.rpc=async name=>name==='housing_access'?{tier:'admin',is_admin:true,trial_communities:[]}:rpc(name);await g.w.refreshAccess();await new Promise(r=>setImmediate(r));assert.equal(g.marketCalls.length,1);assert.equal(g.marketCalls[0].params.end_month,'2026-08');g.d.window.close();
+ }finally{f.d.window.close();}
+});
+test('market double click coalesces before refresh, successful final zero quota remains visible, retry keeps receipt id',async()=>{
+ const f=fixture(),{w}=f;try{await new Promise(r=>setImmediate(r));f.login();f.paid(new Date(Date.now()+60000).toISOString());let accessCalls=0,release;const rpc=w.HousingCloud.rpc;w.HousingCloud.rpc=async(name,args)=>{if(name==='housing_access'){accessCalls++;return{tier:'paid',expires_at:new Date(Date.now()+60000).toISOString(),unlimited_views:false,remaining_views:accessCalls<3?1:0,trial_communities:[]};}return rpc(name,args);};await w.refreshAccess();accessCalls=0;w.HousingCloud.marketReport=(params,id)=>new Promise(resolve=>release=()=>resolve({report:{config:{end_month:'2026-08'}},access:{tier:'paid',expires_at:new Date(Date.now()+60000).toISOString(),unlimited_views:false,remaining_views:0,trial_communities:[]}}));
+  const one=w.requestLatestMarket(),two=w.requestLatestMarket();await new Promise(r=>setImmediate(r));assert.equal(accessCalls,1);release();await Promise.all([one,two]);assert.equal(w.state.marketMode,'latest');
+  let first=true,ids=[];w.HousingCloud.marketReport=async(p,id)=>{ids.push(id);if(first){first=false;throw Error('network');}return{report:{config:{end_month:'2026-08'}},access:{tier:'paid',expires_at:new Date(Date.now()+60000).toISOString(),unlimited_views:false,remaining_views:0,trial_communities:[]}};};await w.requestLatestMarket();await w.requestLatestMarket();assert.equal(ids[0],ids[1]);
+ }finally{f.d.window.close();}
+});
+test('free switch or logout discards a late market result, and validation revokes only its receipt',async()=>{
+  const f=fixture(),{w}=f;try{await new Promise(r=>setImmediate(r));f.login();f.paid(new Date(Date.now()+60000).toISOString());await w.refreshAccess();let release;w.HousingCloud.marketReport=()=>new Promise(resolve=>release=resolve);const pending=w.requestLatestMarket();await new Promise(r=>setImmediate(r));w.HousingMarketUI.showFree();release({report:{config:{end_month:'2026-08'}},access:{tier:'paid',expires_at:new Date(Date.now()+60000).toISOString(),trial_communities:[]}});await pending;assert.notEqual(w.state.marketMode,'latest');
+  w.HousingCloud.marketReport=async()=>({report:{config:{end_month:'2026-08'}},access:{tier:'paid',expires_at:new Date(Date.now()+60000).toISOString(),trial_communities:[]}});await w.requestLatestMarket();w.HousingCloud.validateViews=async()=>({market_valid:false,community_valid:true});await w.checkAccess();assert.notEqual(w.state.marketMode,'latest');
+ }finally{f.d.window.close();}
+});
+test('community public lookup is clamped to free history even when trial quota is exhausted',async()=>{
+ const f=fixture(),{w,q}=f;try{await new Promise(r=>setImmediate(r));f.login();await w.refreshAccess();await w.requestLatest(item);await q('trialConfirm').onclick();await w.requestLatest(second);await q('trialConfirm').onclick();await w.openCommunity(third);const url=f.publicRequests.filter(x=>x.includes('/api/community?')).at(-1);assert.match(url,/end_month=2025-08/);assert.doesNotMatch(url,/end_month=2026/);assert.match(q('transactionBody').textContent,/2025-08-31/);
+ }finally{f.d.window.close();}
 });

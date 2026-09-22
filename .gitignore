@@ -24,3 +24,10 @@ data/community_locations.local.json
 /supabase/.temp/
 /supabase/.branches/
 /node_modules/
+/tmp/
+/*.zip
+/小红书看板推广文案.md
+/闲鱼商品文案.md
+/scripts/build_haidian_resilience_xhs.py
+/scripts/build_housing_observation_02.py
+/scripts/build_stabilization_xhs.py

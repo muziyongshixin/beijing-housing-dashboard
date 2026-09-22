@@ -5,7 +5,11 @@ import {JSDOM} from 'jsdom';
 
 const source=await readFile(new URL('../static/analytics.js',import.meta.url),'utf8');
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
+const appSource=await readFile(new URL('../static/app.js',import.meta.url),'utf8');
 const production='https://liyongzhi.xyz/beijing-housing-dashboard/';
+test('heatmap marker collections are initialized before AMap move events can fire',()=>{
+  assert.match(appSource,/heatmapMarkers:\[\],\s*heatmapLabels:\[\]/);
+});
 function fixture(url=production,build=true,privacy={}) {
   // No resources option: external scripts are NEVER fetched by these tests.
   const dom=new JSDOM(html,{url,runScripts:'outside-only'}),w=dom.window;

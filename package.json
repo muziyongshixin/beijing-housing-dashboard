@@ -3,8 +3,8 @@
   "private": true,
   "scripts": {
     "build:cloud": "esbuild static/cloud-entry.mjs --bundle --minify --supported:template-literal=false --format=iife --outfile=static/cloud.js",
-    "test:ui": "node --test --test-concurrency=1 --test-timeout=30000 tests/product.test.mjs tests/access_ui.test.mjs tests/location_cache.test.mjs tests/ranking_ui.test.mjs tests/analytics_ui.test.mjs tests/admin_ui.test.mjs",
-    "test:permissions": "node --test --test-concurrency=1 --test-timeout=30000 tests/supabase_permissions.test.mjs tests/map_proxy.test.mjs tests/auth_storage.test.mjs tests/auth_sdk.test.mjs",
+    "test:ui": "node --test --test-concurrency=1 --test-timeout=30000 tests/product.test.mjs tests/access_ui.test.mjs tests/location_cache.test.mjs tests/ranking_ui.test.mjs tests/analytics_ui.test.mjs tests/admin_ui.test.mjs tests/market_ui.test.mjs",
+    "test:permissions": "node --test --test-concurrency=1 --test-timeout=30000 tests/supabase_permissions.test.mjs tests/map_proxy.test.mjs tests/auth_storage.test.mjs tests/auth_sdk.test.mjs tests/market_handler.test.mjs tests/market_cache.test.mjs tests/report_compute.test.mjs",
     "test:pages": "node --test --test-concurrency=1 --test-timeout=60000 tests/pages_worker.test.mjs tests/fast_parity.test.mjs"
   },
   "devDependencies": {

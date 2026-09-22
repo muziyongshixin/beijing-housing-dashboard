@@ -7,7 +7,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
 function fixture({logged=true,admin=true,issue}={}){
   const d=new JSDOM(html,{url:'http://localhost/admin.html',runScripts:'outside-only'}),w=d.window,q=id=>w.document.getElementById(id),calls=[];let authChange;
   w.HousingCloud={client:{auth:{getSession:async()=>({data:{session:logged?{user:{email:'test@example.test'}}:null}}),onAuthStateChange:fn=>authChange=fn,signOut:async()=>{}}},rpc:async(name,args)=>{
-    calls.push({name,args});if(name==='housing_admin_access')return{is_admin:admin};if(issue)return issue(args);
+    calls.push({name,args});if(name==='housing_admin_access')return{is_admin:admin};if(name==='housing_admin_cache')return{settings:{ttl_seconds:3600,budget_bytes:10485760},payload_bytes:2048,physical_bytes:4096,database_bytes:8192,revision:7,entries:[{cache_key:'a'.repeat(64),public_version:1,private_version:2,algorithm_version:3,params:{window:6},payload_bytes:1024,hits:2,last_access_at:'2026-09-22T00:00:00Z',expires_at:'2026-09-22T01:00:00Z'}]};if(issue)return issue(args);
     return{ok:true,email:args.p_email,order_ref:args.p_order_ref,duration_days:args.p_duration_days,max_views:args.p_max_views,redeem_before:'2026-10-17'};
   }};
   w.eval(script);return{d,w,q,calls,logout:()=>authChange('SIGNED_OUT'),fill:()=>{q('recipientEmail').value='buyer@example.test';q('issueConfirm').checked=true;},submit:()=>q('issueForm').onsubmit({preventDefault(){}})};
@@ -30,4 +30,10 @@ test('network retry keeps exact code/order; a late success after logout is disca
 });
 test('admin page contains no analytics, user metadata grant, or third-party scripts',()=>{
   const d=new JSDOM(html);try{assert.deepEqual([...d.window.document.scripts].map(s=>s.getAttribute('src')),['./cloud.js','./admin.js']);assert.match(d.window.document.querySelector('meta[http-equiv="Content-Security-Policy"]').content,/script-src 'self'/);assert.doesNotMatch(script,/@qq\.com|user_metadata|service_role/);}finally{d.window.close();}
+});
+test('cache controls are admin-only, render metadata, and use explicit server actions',async()=>{
+  const f=fixture();try{await tick();assert.equal(f.q('cacheStats').hidden,true);f.q('cacheRefresh').click();await tick();assert.match(f.q('cachePayloadBytes').textContent,/2.0 KiB/);assert.equal(f.q('cacheEntries').querySelectorAll('.cache-delete').length,1);
+    f.q('cacheTtl').value='7200';f.q('cacheBudget').value='12';f.q('cacheSettings').onsubmit({preventDefault(){}});await tick();const setting=f.calls.find(x=>x.name==='housing_admin_cache'&&x.args.p_action==='settings');assert.equal(setting.args.p_ttl,7200);assert.equal(setting.args.p_budget,12582912);
+    f.w.confirm=()=>true;f.q('cacheEntries').querySelector('.cache-delete').click();await tick();assert.equal(f.calls.some(x=>x.name==='housing_admin_cache'&&x.args.p_action==='delete'),true);f.logout();assert.equal(f.q('cacheStats').hidden,true);assert.equal(f.q('cacheEntries').textContent.includes('已清除'),true);
+  }finally{f.d.window.close();}
 });
