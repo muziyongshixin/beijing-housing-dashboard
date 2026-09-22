@@ -39,7 +39,7 @@ def main():
         access_token = session["access_token"]
 
         _, before = request("/rest/v1/rpc/housing_access", body={}, token=access_token)
-        assert before["is_admin"] is True and before["tier"] == "paid", "administrator bypass missing"
+        assert before["is_admin"] is True and before["tier"] == "admin", "administrator bypass missing"
 
         request_id = str(uuid.uuid4())
         params = {"end_month": "2026-08", "window": 6, "compare": "adjacent", "metric": "median"}
