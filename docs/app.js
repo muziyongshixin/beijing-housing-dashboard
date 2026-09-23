@@ -59,6 +59,7 @@ async function loadPublicMapConfig(){
     state.mapConnectionFailed=true;
     showMapPlaceholder("地图服务暂时无法连接","请检查网络后点击“地图连接重试”；成交统计仍可正常查看。");
     showHeatmapPlaceholder("地图服务暂时无法连接","请检查网络后点击“地图连接重试”；排行和趋势不受影响。");
+    setHeatmapStatus("地图服务连接失败，可稍后重试。",true);
     $("mapSettingsButton").textContent="地图连接重试";
     $("mapSettingsButton").onclick=()=>{ $("mapSettingsButton").textContent="正在连接地图…";void loadPublicMapConfig(); };
   }
@@ -174,7 +175,12 @@ function clearLatestMarketDOM(){
  setHeatmapStatus("正在切回公开市场数据…");
 }
 function setAnalysisBusy(busy){$("analysisLoading").hidden=!busy;$("marketResults").classList.toggle("is-calculating",busy);$("marketResults").setAttribute("aria-busy",String(busy));$("marketResults").inert=busy;$("analyzeButton").disabled=busy;$("analyzeButton").querySelector(".button-spinner").hidden=!busy;$("analyzeButtonText").textContent=busy?"正在计算…":"应用设置并重新计算";$("analysisFeedback").textContent=busy?"正在计算，请稍候…":"";}
-const nextPaint=()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
+// Background/occluded Safari tabs can suspend animation frames indefinitely.
+// Painting the spinner must never be a prerequisite for starting the request.
+const nextPaint=()=>new Promise(resolve=>{
+ let frame;const finish=()=>{clearTimeout(timer);if(frame!==undefined)cancelAnimationFrame(frame);resolve();};
+ const timer=setTimeout(finish,100);frame=requestAnimationFrame(()=>setTimeout(finish,0));
+});
 async function analyze(){
  if(state.marketMode==="latest"){
    const changed=state.premiumParams!==marketCalculationParams();

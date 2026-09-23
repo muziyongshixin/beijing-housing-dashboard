@@ -34,3 +34,13 @@ test('loading appears before work, superseded requests cannot replace newer resu
  w.fetchJSON=async()=>{throw Error('测试失败')};await w.analyze();assert.equal(q('analysisLoading').hidden,true);assert.equal(q('marketResults').inert,false);assert.match(q('analysisFeedback').textContent,/保留上次/);assert.equal(q('errorBox').hidden,false);
  }finally{f.d.window.close();}
 });
+
+test('analysis completes when a background browser never delivers an animation frame',async()=>{
+ const f=fixture(),{w,q}=f;try{
+  w.requestAnimationFrame=()=>1;w.cancelAnimationFrame=()=>{};
+  for(const name of ['renderSummary','renderMap','renderRanking','renderTrend','loadCommunityHeatmap'])w[name]=()=>{};
+  w.fetchJSON=async url=>url.includes('/api/analyze?')?result(3):{points:[]};
+  await w.analyze();assert.equal(w.qaState.result.rows.length,3);
+  assert.equal(q('analysisLoading').hidden,true);assert.equal(q('analyzeButton').disabled,false);
+ }finally{f.d.window.close();}
+});

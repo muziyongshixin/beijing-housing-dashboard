@@ -64,8 +64,8 @@ test('worker serves presets and community shards without loading SQLite, with cu
 });
 
 test('worker client routes concurrent responses, progress, and loading errors',async()=>{
-  let worker;class TestWorker{constructor(url){assert.equal(url,'./pages-worker.js');worker=this;}messages=[];postMessage(m){this.messages.push(m);}}
-  const context=vm.createContext({Worker:TestWorker,window:{}});
+  let worker;class TestWorker{constructor(url){assert.equal(url,'./pages-worker.js');worker=this;}messages=[];postMessage(m){this.messages.push(m);}terminate(){}}
+  const context=vm.createContext({Worker:TestWorker,window:{},setTimeout,clearTimeout});
   vm.runInContext(readFileSync(new URL('../static/pages-client.js',import.meta.url),'utf8'),context);
   const data=context.window.DashboardData,progress=[];
   const initialization=data.initialize(v=>progress.push(v)),analysis=data.analyze(new URLSearchParams('limit=500'));
@@ -73,4 +73,18 @@ test('worker client routes concurrent responses, progress, and loading errors',a
   assert.deepEqual(progress,['50%']);assert.equal((await initialization).ready,true);assert.deepEqual(await analysis,{rows:[]});
   assert.equal(worker.messages[1].params,'limit=500');
   const failure=data.trend(new URLSearchParams());worker.onerror();await assert.rejects(failure,/后台计算加载失败/);await assert.rejects(data.analyze(),/后台计算加载失败/);
+});
+
+test('unresponsive worker rejects concurrent requests and a retry creates a fresh worker',async()=>{
+  const workers=[],timers=new Map();let timerId=0;
+  class TestWorker{constructor(){workers.push(this);}messages=[];postMessage(m){this.messages.push(m);}terminate(){this.terminated=true;}}
+  const context=vm.createContext({Worker:TestWorker,window:{},setTimeout:(fn,ms)=>{timers.set(++timerId,{fn,ms});return timerId;},clearTimeout:id=>timers.delete(id)});
+  vm.runInContext(readFileSync(new URL('../static/pages-client.js',import.meta.url),'utf8'),context);
+  const data=context.window.DashboardData;
+  const a=assert.rejects(data.analyze(),/后台计算超时/),b=assert.rejects(data.trend(),/后台计算超时/);
+  assert.equal(workers.length,1);assert.equal(timers.get(1).ms,240000);
+  timers.get(1).fn();await Promise.all([a,b]);assert.equal(timers.size,0);assert.equal(workers[0].terminated,true);
+  const retry=data.analyze();assert.equal(workers.length,2);
+  workers[0].onmessage({data:{id:1,value:'late'}});workers[0].onerror();
+  workers[1].onmessage({data:{id:3,value:{rows:[]}}});assert.deepEqual(await retry,{rows:[]});assert.equal(timers.size,0);
 });

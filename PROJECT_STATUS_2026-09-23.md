@@ -174,7 +174,7 @@ Function failed due to not having enough compute resources (please check logs)
 
 ### 已执行的验证
 
-- 40 项 UI、55 项权限/服务端、5 项 Pages、33 项 Python 测试，共 133 项。
+- 41 项 UI、55 项权限/服务端、6 项 Pages、33 项 Python 测试，共 135 项。
 - `tests/report_full_parity.mjs` 逐字段比对完整报告与独立 PostgreSQL SQL 参考，包括 benchmark、区、小区、地图、48 个月趋势、样本资格和各辅助指标；额外对分任务重组结果做同样比对。真实有效数据 509,901 条、私有增量 64,867 条，覆盖默认、24 月同比、自定义 2018 年基期及海淀中关村面积/户型筛选。
 - 云端 [管理员与付费验收 35816432230](https://github.com/muziyongshixin/beijing-housing-dashboard/actions/runs/35816432230) 成功：管理员默认最新/重试不扣次；长窗口、自定义基期、局部筛选成功；付费无效参数不扣次，同 request_id 并发只扣一次，小区与报告共享余额，最后一次额度竞争只允许一笔成功，零余额合法回执仍可重试。
 - 真实云端事务验证到期与撤销：市场和小区回执失效，旧报告重试被拒绝。测试变更回滚；临时 Auth 账号、兑换码及其回执已清理，并查询确认账号和兑换码均为零。
@@ -192,3 +192,10 @@ Function failed due to not having enough compute resources (please check logs)
 - 自动支付、定价、退款财务与内容发布不属于本轮重构。
 
 最终 `market-edge-v5` 全量对账四场景全部通过（约 230 秒，本地参考 SQL 为主要耗时）。[云端完整历史基期及内部入口隔离验收 35830191474](https://github.com/muziyongshixin/beijing-housing-dashboard/actions/runs/35830191474) 已成功，覆盖 24 月当前窗口 + 2018-01 至 2026-08 全历史基准、24 月同比、自定义短基期、局部筛选，并验证用户 JWT 无法调用内部计算接口。主分支发布和最后一次烟测见 GitHub Actions 最新运行。
+
+### 发布末轮浏览器补修与清理
+
+- Safari 末轮复查发现免费页可能停在“正在计算”。相同发布文件在本机 Safari 能完成，线上文件及预计算数据 HTTP 200、SHA-256 与发布文件一致。补上动画帧等待的 100ms 兜底：后台/被遮挡页面即使不触发 `requestAnimationFrame` 也会启动计算；新增此情形回归。
+- 免费 Worker 请求增加主线程总超时，初始化 45 秒、自定义计算 240 秒；超时终止旧 Worker、释放并发请求，下次重试重新初始化，迟到消息无法污染新请求。新增无响应、并发失败、重建和迟到事件回归。地图连接失败时同步更新状态文字。
+- [管理员与付费最终云端验收 35830854728](https://github.com/muziyongshixin/beijing-housing-dashboard/actions/runs/35830854728) 和 [公开云端端点验收 35830851245](https://github.com/muziyongshixin/beijing-housing-dashboard/actions/runs/35830851245) 均通过；其后补修只涉及浏览器等待/错误状态，无服务端计算或扣次变化。
+- 临时 QA Auth 账号、兑换码和回执已清理；GitHub 临时 `SUPABASE_SERVICE_ROLE_KEY`、`HOUSING_ADMIN_EMAIL` 已删除，secret 列表为空。生产 Supabase 配置保留。重跑管理员烟测需由维护者临时配置这两项 GitHub secrets，完成后清理。
