@@ -97,6 +97,9 @@ def check_history(directory, meta):
     assert set(expected) == set(manifest['months'])
     for month,ref in manifest['months'].items():
         assert month <= '2025-08' and read(ref) == expected[month], 'History differs from free database'
+    assert set(manifest.get('years', {})) == {month[:4] for month in expected}
+    for year,ref in manifest.get('years', {}).items():
+        assert read(ref) == [row for month in sorted(expected) if month.startswith(year) for row in expected[month]], 'Annual history differs from free database'
     return allowed
 
 

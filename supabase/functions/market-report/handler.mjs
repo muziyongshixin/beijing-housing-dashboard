@@ -11,7 +11,7 @@ export function createMarketHandler({authenticate,rpc,manifest,publicBase,fetchP
     const bytes=new Uint8Array(await response.arrayBuffer());
     if(bytes.length!==ref.bytes||await digest(bytes)!==ref.sha256)throw Error('public_snapshot_mismatch');
     const raw=await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
-    if(raw.byteLength!==ref.raw_bytes||raw.byteLength>1000000)throw Error('public_snapshot_mismatch');
+    if(raw.byteLength!==ref.raw_bytes||raw.byteLength>6000000)throw Error('public_snapshot_mismatch');
     return JSON.parse(new TextDecoder().decode(raw));
   }
   return async request=>{
@@ -39,18 +39,19 @@ export function createMarketHandler({authenticate,rpc,manifest,publicBase,fetchP
       if(begin.pending)throw Error('compute_busy');
       if(begin.lease){
         lease=begin.lease;
-        const communities=await read(manifest.catalog),months=historicalMonths(params,manifest),accumulator=createMarketAccumulator(params,communities);
+        const communities=await read(manifest.catalog),months=historicalMonths(params,manifest),selectedMonths=new Set(months),accumulator=createMarketAccumulator(params,communities);
         // Bound concurrency, aggregate each verified chunk immediately and let
         // the source rows be reclaimed.  Historical rows are never persisted.
-        for(let offset=0;offset<months.length;offset+=4){
-         const batch=months.slice(offset,offset+4);
-         const chunks=await Promise.all(batch.map(m=>read(manifest.months[m])));
+        const years=[...new Set(months.map(month=>month.slice(0,4)))];
+        for(let offset=0;offset<years.length;offset+=4){
+         const batch=years.slice(offset,offset+4);
+         const chunks=await Promise.all(batch.map(year=>read(manifest.years[year])));
          for(let i=0;i<batch.length;i++){
-          const m=batch[i],chunk=chunks[i];
+          const year=batch[i],chunk=chunks[i];
           for(const row of chunk){
-            if(row[0]!==m||m>'2025-08')throw Error('public_snapshot_mismatch');
+            if(typeof row[0]!=='string'||row[0].slice(0,4)!==year||row[0]>'2025-08')throw Error('public_snapshot_mismatch');
           }
-          accumulator.addPublic(chunk);
+          accumulator.addPublic(chunk,selectedMonths);
          }
         }
         for(let after=0;;){

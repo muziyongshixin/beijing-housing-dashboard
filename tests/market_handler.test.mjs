@@ -5,7 +5,7 @@ const id='00000000-0000-4000-8000-000000000001',origin='https://liyongzhi.xyz';
 async function fixture(options={}){
  const contents={},manifest={months:{}};
  async function ref(name,data){const raw=JSON.stringify(data),bytes=gzipSync(raw),path='data/history/'+name+'.json.gz';contents[path]=bytes;return {path,sha256:await digest(bytes),bytes:bytes.length,raw_bytes:Buffer.byteLength(raw)};}
- manifest.catalog=await ref('catalog',[['测试','测试','甲']]);manifest.months['2025-08']=await ref('2025-08',[['2025-08',0,80,40000,null,null,'2']]);
+ manifest.catalog=await ref('catalog',[['测试','测试','甲']]);manifest.months['2025-08']=await ref('2025-08',[['2025-08',0,80,40000,null,null,'2']]);manifest.years={'2025':await ref('year-2025',[['2025-08',0,80,40000,null,null,'2']])};
  const calls=[],urls=[];const handler=createMarketHandler({manifest,publicBase:'https://raw.githubusercontent.com/muziyongshixin/beijing-housing-dashboard/'+ 'a'.repeat(40)+'/docs/',
  authenticate:async()=>options.unauthorized?null:id,delay:async()=>{},
  fetchPublic:async url=>{urls.push(url);return new Response(options.corrupt?new Uint8Array([1]):contents[url.split('/docs/')[1]]);},

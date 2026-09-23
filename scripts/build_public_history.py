@@ -29,16 +29,20 @@ def build(directory=ROOT / 'docs'):
         path = f'data/history/{name}.json.gz'
         (directory / path).write_bytes(compressed)
         return {'path': path, 'sha256': hashlib.sha256(compressed).hexdigest(), 'bytes': len(compressed), 'raw_bytes': len(raw)}
+    years = {}
+    for month, rows in history.items():
+        years.setdefault(month[:4], []).extend(rows)
     manifest = {'schema': 1, 'through': '2025-08-31', 'source_sha256': hashlib.sha256((directory / 'data/transactions.sqlite3').read_bytes()).hexdigest(),
                 'catalog': save('catalog', [r[1:] for r in communities]),
-                'months': {month: save(month, rows) for month, rows in history.items()}}
+                'months': {month: save(month, rows) for month, rows in history.items()},
+                'years': {year: save(f'year-{year}', rows) for year, rows in years.items()}}
     payload = json.dumps(manifest, ensure_ascii=False, separators=(',', ':'))
     (directory / 'data/history/manifest.json').write_text(payload)
     # This manifest is deployment-trusted code, never supplied by a browser.
     target = ROOT / 'supabase/functions/market-report/public-history-manifest.json'
     target.parent.mkdir(exist_ok=True, parents=True)
     target.write_text(payload)
-    print(f'Public-only history: {sum(map(len,history.values())):,} rows, {len(history)} monthly shards')
+    print(f'Public-only history: {sum(map(len,history.values())):,} rows, {len(history)} monthly shards, {len(years)} annual edge shards')
 
 if __name__ == '__main__':
     build()

@@ -65,9 +65,10 @@ export function createMarketAccumulator(params,catalog){
       let value=monthly.get(month);if(!value){value=bucket(params.metric);monthly.set(month,value);}addBucket(value,month,area,price,cycle,discount);
     }
   }
-  function addPublic(rows){
+  function addPublic(rows,allowedMonths=null){
     for(const row of rows){
       if(!Array.isArray(row)||row.length<7)throw Error('public_snapshot_mismatch');const location=catalog[row[1]];if(!location)throw Error('public_snapshot_mismatch');
+      if(allowedMonths&&!allowedMonths.has(row[0]))continue;
       add(String(row[0]),location[0],location[1],location[2],Number(row[2]),Number(row[3]),row[4]==null?null:Number(row[4]),row[5]==null?null:Number(row[5]),row[6]??null);
     }
   }
