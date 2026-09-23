@@ -97,7 +97,7 @@ function qualify(row,params,cityChange){
 }
 
 export function createMarketAccumulator(params,catalog,part=null){
-  const summary=!part||part==='summary',cityTrend=!part||part==='city_trend',districtTrends=!part||part==='district_trends';
+  const summary=!part||['summary','summary_global','summary_communities'].includes(part),globalSummary=summary&&part!=='summary_communities',communitySummary=summary&&part!=='summary_global',cityTrend=!part||part==='city_trend',districtTrends=!part||part==='district_trends';
   const benchmark=pair(params.metric),districts=new Map(),communities=new Map(),mapGroups=new Map(),trendScopes=new Map(cityTrend?[['全部',new Map()]]:[]);
   const trendHistoryStart=shiftMonth(params.trend_start,1-params.window);
   const group=(store,key,values)=>{let value=store.get(key);if(!value){value=pair(params.metric,values);store.set(key,value);}return value;};
@@ -105,17 +105,18 @@ export function createMarketAccumulator(params,catalog,part=null){
     if(!Number.isFinite(area)||!Number.isFinite(price))throw Error('invalid_fact');
     if(!between(month,params.history_start,params.history_end)||area<params.area_min||area>params.area_max||(params.rooms!=='全部'&&rooms!==params.rooms))return;
     const current=between(month,params.current_start,params.current_end),base=between(month,params.base_start,params.base_end);
-    if(summary&&current)addBucket(benchmark.current,month,area,price,cycle,discount);if(summary&&base)addBucket(benchmark.base,month,area,price,cycle,discount);
-    if(summary&&(current||base)){
+    if(globalSummary&&current)addBucket(benchmark.current,month,area,price,cycle,discount);if(globalSummary&&base)addBucket(benchmark.base,month,area,price,cycle,discount);
+    if(globalSummary&&(current||base)){
       const mapDistrict=district==='开发区'?'大兴':district,mapPair=group(mapGroups,mapDistrict,{district:mapDistrict});
       if(current)addBucket(mapPair.current,month,area,price,cycle,discount);if(base)addBucket(mapPair.base,month,area,price,cycle,discount);
     }
     const scoped=(params.district==='全部'||district===params.district)&&(params.business_area==='全部'||businessArea===params.business_area);
     if(!scoped)return;
     if(summary&&(current||base)){
-      const districtPair=group(districts,district,{district});
-      const communityPair=group(communities,[district,businessArea,community].join(SEP),{district,business_area:businessArea,community});
-      for(const value of [districtPair,communityPair]){if(current)addBucket(value.current,month,area,price,cycle,discount);if(base)addBucket(value.base,month,area,price,cycle,discount);}
+      const targets=[];
+      if(globalSummary)targets.push(group(districts,district,{district}));
+      if(communitySummary)targets.push(group(communities,[district,businessArea,community].join(SEP),{district,business_area:businessArea,community}));
+      for(const value of targets){if(current)addBucket(value.current,month,area,price,cycle,discount);if(base)addBucket(value.base,month,area,price,cycle,discount);}
     }
     if(districtTrends&&!trendScopes.has(district))trendScopes.set(district,new Map());
     if(!between(month,trendHistoryStart,params.current_end))return;
@@ -152,9 +153,23 @@ export function createMarketAccumulator(params,catalog,part=null){
     const trends={};for(const [scope,monthly] of trendScopes)trends[scope]=trend(monthly,params);
     const collator=new Intl.Collator('zh-CN'),textSort=(a,b)=>collator.compare(String(a),String(b));districtRows.sort((a,b)=>textSort(a.district,b.district));
     communityRows.sort((a,b)=>textSort(a.district,b.district)||textSort(a.business_area,b.business_area)||textSort(a.community,b.community));map.sort((a,b)=>textSort(a.district,b.district));
+    if(part==='summary_communities')return {communities:communityRows};
     return {config:params,benchmark:benchmarkResult,districts:districtRows,communities:communityRows,map,...(part?{}:{trends})};
   }
   return {addPublic,addPrivate,finish};
 }
 
 export function computeMarket(params,history,privateRows=[]){const accumulator=createMarketAccumulator(params,history.communities||[]);accumulator.addPublic(history.rows||[]);accumulator.addPrivate(privateRows);return accumulator.finish();}
+
+// Combine independent scopes, never period percentiles. Global and community
+// statistics were each computed from all raw observations in their own scope.
+export function assembleReport(parts){
+  const [global,communities,city,districts]=parts,change=global.benchmark.price_change;
+  const counts=new Map();
+  for(const row of communities.communities){
+    row.relative_beijing=row.price_change!=null&&change!=null?round(row.price_change-change):null;
+    if(row.eligible){const count=counts.get(row.district)||{total:0,good:0};count.total++;count.good+=Number(row.price_change>change);counts.set(row.district,count);}
+  }
+  for(const row of global.districts){const count=counts.get(row.district);row.resilient_ratio=count?.total?round(count.good/count.total):null;row.eligible_community_count=count?.total||0;}
+  return {...global,communities:communities.communities,trends:{...city.trends,...districts.trends}};
+}

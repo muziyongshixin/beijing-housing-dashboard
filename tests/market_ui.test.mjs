@@ -25,7 +25,7 @@ test('latest report uses full candidate rows for local display changes without t
  const f=fixture(),{w,q}=f;try{
   q('endMonth').max='2026-08';q('endMonth').value='2026-08';['minCurrent','minBase'].forEach(id=>q(id).value='1');q('minTotal').value='2';q('minActiveMonths').value='1';
   w.HousingMarketUI.renderLatestMarket(report,w.getParams().toString());
-  assert.equal(w.qaState.marketMode,'latest');assert.equal(q('endMonth').max,'2026-08');assert.match(q('marketRangeBadge').textContent,/2026-08-29/);
+  assert.match(q('periodPreview').textContent,/2026-03 至 2026-08/);assert.equal(w.qaState.marketMode,'latest');assert.equal(q('endMonth').max,'2026-08');assert.match(q('marketRangeBadge').textContent,/2026-08-29/);
   q('level').innerHTML='<option value="district">区域</option><option value="community">小区</option>';q('district').innerHTML='<option value="全部">全部</option><option value="海淀区">海淀区</option>';q('level').value='community';q('district').value='海淀区';q('sort').value='price_change';q('direction').value='asc';w.analyze();
   assert.equal(w.qaState.result.rows.length,2);assert.equal(w.qaState.result.summary.candidate_count,2);assert.equal(w.qaState.trend.points[0].price,60000);
   assert.match(q('analysisFeedback').textContent,/不会重新查询/);

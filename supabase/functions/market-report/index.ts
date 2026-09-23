@@ -1,3 +1,4 @@
+import {assembleReport} from './compute.mjs';
 import {createMarketHandler} from './handler.mjs';
 import manifest from './public-history-manifest.json' with {type:'json'};
 const url=Deno.env.get('SUPABASE_URL')||'',service=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
@@ -6,11 +7,11 @@ async function rpc(name:string,args:unknown){
   const body=await r.json();if(!r.ok||body?.error)throw Error(body?.error||'database_unavailable');return body;
 }
 Deno.serve(createMarketHandler({manifest,publicBase:Deno.env.get('MARKET_PUBLIC_BASE')||'',rpc,computeParts:async(args)=>{
-    const parts=await Promise.all(['summary','city_trend','district_trends'].map(async part=>{
+    const parts=await Promise.all(['summary_global','summary_communities','city_trend','district_trends'].map(async part=>{
       const response=await fetch(url+'/functions/v1/market-compute',{method:'POST',headers:{apikey:service,Authorization:'Bearer '+service,'Content-Type':'application/json'},body:JSON.stringify({...args,part}),signal:AbortSignal.timeout(110000)});
       const body=await response.json();if(!response.ok||body.error)throw Error(body.code==='WORKER_RESOURCE_LIMIT'?'compute_resource_limit':body.error||'compute_unavailable');return body;
     }));
-    return {...parts[0],trends:{...parts[1].trends,...parts[2].trends}};
+    return assembleReport(parts);
   },
   authenticate:async(request:Request)=>{
     const bearer=request.headers.get('authorization')||'';if(!bearer.startsWith('Bearer '))return null;

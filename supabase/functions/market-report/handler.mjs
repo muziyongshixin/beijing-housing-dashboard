@@ -54,7 +54,7 @@ export async function computeReportPart({uid,lease,params,part=null,manifest,pub
     if(raw.byteLength!==ref.raw_bytes||raw.byteLength>6000000)throw Error('public_snapshot_mismatch');
     return JSON.parse(new TextDecoder().decode(raw));
   }
-  const communities=await read(manifest.catalog),selectedMonths=new Set(historicalMonths(params,manifest).filter(month=>part!=='summary'||(month>=params.current_start&&month<=params.current_end)||(month>=params.base_start&&month<=params.base_end)));
+  const communities=await read(manifest.catalog),selectedMonths=new Set(historicalMonths(params,manifest).filter(month=>!part?.startsWith('summary')||(month>=params.current_start&&month<=params.current_end)||(month>=params.base_start&&month<=params.base_end)));
   const accumulator=createMarketAccumulator(params,communities,part);
   for(const year of new Set([...selectedMonths].map(month=>month.slice(0,4)))){
     const rows=await read(manifest.years[year]);

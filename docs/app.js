@@ -52,10 +52,13 @@ async function loadPublicMapConfig(){
     if(!response.ok)throw new Error("地图配置服务暂不可用");
     const config=await response.json();
     if(!config.configured||config.mode!=="server_proxy")throw new Error("地图尚未配置");
-    state.amapConfig=config;setupMapSettings();$("mapSettingsButton").onclick=openMapSettings;
+    state.amapConfig=config;state.mapConnectionFailed=false;setupMapSettings();$("mapSettingsButton").onclick=openMapSettings;
     if(state.community)renderCommunityLocation();
     if(state.result)void loadCommunityHeatmap();
   }catch{
+    state.mapConnectionFailed=true;
+    showMapPlaceholder("地图服务暂时无法连接","请检查网络后点击“地图连接重试”；成交统计仍可正常查看。");
+    showHeatmapPlaceholder("地图服务暂时无法连接","请检查网络后点击“地图连接重试”；排行和趋势不受影响。");
     $("mapSettingsButton").textContent="地图连接重试";
     $("mapSettingsButton").onclick=()=>{ $("mapSettingsButton").textContent="正在连接地图…";void loadPublicMapConfig(); };
   }
@@ -97,7 +100,7 @@ function showCommunityPoint(result,cached=false){const AMap=state.amap,map=creat
 function pickCommunityPoi(pois,d){const community=d.community.replace(/小区$/,""),district=d.district.replace(/区$/ ,"");return pois.slice().sort((a,b)=>{const score=p=>Number((p.name||"")===d.community)*30+Number((p.name||"")===community)*25+Number((p.name||"").startsWith(d.community))*12+Number((p.name||"").includes(d.community))*8+Number((p.name||"").includes(community))*5+Number(`${p.adname||""}${p.address||""}`.includes(district))*2+Number(`${p.adname||""}${p.address||""}`.includes(d.business_area));return score(b)-score(a)})[0]}
 async function locateCommunity(query,force=false,requestId=null){
   const d=state.community;if(!d)return;const activeRequestId=requestId??++state.communityLocationRequestId,cfg=activeMapConfig(),isStale=()=>activeRequestId!==state.communityLocationRequestId||state.community!==d;
-  if(!cfg?.configured){showMapPlaceholder("需要配置高德地图","点击地图设置后即可显示底图，已缓存坐标不会丢失。");return}
+  if(!cfg?.configured){showMapPlaceholder(state.mapConnectionFailed?"地图服务暂时无法连接":"需要配置高德地图",state.mapConnectionFailed?"请检查网络后点击“地图连接重试”。":"点击地图设置后即可显示底图，已缓存坐标不会丢失。");return}
   try{await locationStore.ready();await loadAmap();if(isStale())return;
     setLocationStatus("正在优先读取共享坐标缓存…");
     const r=await locationStore.resolve(d,()=>searchCommunityPosition(new state.amap.PlaceSearch({city:"北京",citylimit:true,pageSize:10,pageIndex:1,extensions:"all"}),d,query),{force,query});
@@ -213,7 +216,7 @@ function renderLatestMarket(report,params){
  state.heatmapData={rows:(report.communities||[]).filter(r=>r.eligible&&(config.district==='全部'||r.district===config.district))};
  const latestEnd=latestReportEnd(report);
  if(latestEnd){$("endMonth").max=latestEnd;$("endMonth").value=report.config.end_month||report.config.current_end;}
- setAnalysisBusy(false);
+ updatePeriodPreview();setAnalysisBusy(false);
  renderSummary();renderMap();renderRanking();renderTrend();refreshHeatmapPresentation();
  if(activeMapConfig()?.configured)void renderLatestHeatmap();
  $("marketRangeBadge").textContent=latestReportLabel(report);
@@ -236,7 +239,7 @@ function clearLatestMarket(){
  $("marketRangeBadge").textContent="公开市场范围 · 截至 2025-08-31";
  $("marketAccessHint").textContent="免费市场数据截至 2025-08-31。最新完整市场报告需显式查询；小区与市场报告共用查看次数。";
  $("analyzeButtonText").textContent="应用设置并重新计算";$("analysisFeedback").textContent="";
- if(wasLatest)clearLatestMarketDOM();setAnalysisBusy(false);
+ updatePeriodPreview();if(wasLatest)clearLatestMarketDOM();setAnalysisBusy(false);
 }
 window.HousingMarketUI={renderLatestMarket,clearLatestMarket,calculationParams:marketCalculationParams,showFree:()=>{window.HousingMarketAccess?.cancel();clearLatestMarket();return analyze();}};
 function renderSummary(){const b=state.result.benchmark,c=state.result.config,months=monthCount(c.current_start,c.current_end),baseMonths=monthCount(c.base_start,c.base_end);$("cityChange").textContent=fmtPercent(b.price_change);$("cityChange").className=tone(b.price_change);$("cityPrice").textContent=`${fmtPrice(b.base_price)} → ${fmtPrice(b.current_price)}`;$("currentVolume").textContent=`${fmtNumber(b.current_volume)} 套`;$("volumeChange").textContent=`基准期 ${fmtNumber(b.base_volume)} 套，变化 ${fmtPercent(b.volume_change)}`;$("monthlyVolume").textContent=`${fmtNumber(b.current_volume/months)} 套/月`;$("monthlyVolumeBase").textContent=`基准期 ${fmtNumber(b.base_volume/baseMonths)} 套/月`;$("eligibleCount").textContent=fmtNumber(state.result.summary.eligible_count);$("candidateCount").textContent=`共评估 ${fmtNumber(state.result.summary.candidate_count)} 个对象`}
@@ -301,7 +304,7 @@ function heatmapCacheStatus(rows,located,requests=0){
 }
 async function loadCommunityHeatmap(snapshot=null){
  if(state.marketMode==="latest"&&state.premiumReport){return renderLatestHeatmap();}
- const requestId=++state.heatmapRequestId,cfg=activeMapConfig();if(!cfg?.configured){showHeatmapPlaceholder("需要配置高德地图","配置后显示底图；坐标将复用公共快照和浏览器缓存。");setHeatmapStatus("高德地图尚未配置。",true);return}
+ const requestId=++state.heatmapRequestId,cfg=activeMapConfig();if(!cfg?.configured){showHeatmapPlaceholder(state.mapConnectionFailed?"地图服务暂时无法连接":"需要配置高德地图",state.mapConnectionFailed?"请检查网络后点击“地图连接重试”。":"配置后显示底图；坐标将复用公共快照和浏览器缓存。");setHeatmapStatus(state.mapConnectionFailed?"地图服务连接失败，可稍后重试。":"高德地图尚未配置。",true);return}
  if(!state.heatmapMap)showHeatmapPlaceholder("正在计算小区涨跌","优先读取坐标缓存，不重复查询已定位小区。");setHeatmapStatus("正在读取小区涨跌幅与坐标缓存…");
  try{const params=snapshot?new URLSearchParams(snapshot):getParams();params.set("limit","500");const[data,locations]=await Promise.all([fetchJSON(`/api/community-heatmap?${params}`),locationStore.ready()]);
  if(state.marketMode!=="free"||requestId!==state.heatmapRequestId)return;state.heatmapData=data;const rows=data.rows||[];state.heatmapColorScale=buildHeatmapColorScale(rows,heatmapMode().scale);renderHeatmapScale();await loadAmap();if(state.marketMode!=="free"||requestId!==state.heatmapRequestId)return;

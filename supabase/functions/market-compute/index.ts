@@ -10,7 +10,7 @@ Deno.serve(async request=>{
   try{
     const text=await request.text();if(text.length>8192)throw Error('invalid_request');
     const {uid,lease,params,part}=JSON.parse(text);
-    if(!['summary','city_trend','district_trends'].includes(part)||!uid||!lease)throw Error('invalid_request');
+    if(!['summary_global','summary_communities','city_trend','district_trends'].includes(part)||!uid||!lease)throw Error('invalid_request');
     const input=Object.fromEntries(Object.entries(params).filter(([key])=>['end_month','window','compare','base_start','base_end','metric','district','business_area','rooms','area_min','area_max','min_current','min_base','min_total','min_active_months'].includes(key)));
     if(JSON.stringify(normalizeParams(input,params.end_month))!==JSON.stringify(params))throw Error('invalid_parameters');
     const rpc=async(name:string,args:unknown)=>{const r=await fetch(url+'/rest/v1/rpc/'+name,{method:'POST',headers:{apikey:service,Authorization:'Bearer '+service,'Content-Type':'application/json'},body:JSON.stringify(args)});const body=await r.json();if(!r.ok||body.error)throw Error(body.error||'database_unavailable');return body;};

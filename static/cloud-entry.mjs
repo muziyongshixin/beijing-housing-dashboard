@@ -15,7 +15,7 @@ window.HousingCloud={client,sessionStore,communityHistory,latestMonth:'2026-08',
     if(error)throw error;if(!session||!sessionStore.isCurrent(session))throw Error('verified_email_required');
     const response=await fetch(url+'/functions/v1/market-report',{method:'POST',cache:'no-store',headers:{apikey:publicKey,Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},
       body:JSON.stringify({params:params instanceof URLSearchParams?Object.fromEntries(params):params,request_id:requestId}),signal:AbortSignal.timeout(140000)});
-    const body=await response.json();if(!response.ok||body?.error)throw Error(body?.error||'market_unavailable');
+    const body=await response.json();if(!response.ok||body?.error)throw Error(body?.error||(body?.code==='WORKER_RESOURCE_LIMIT'?'compute_resource_limit':'market_unavailable'));
     if(!sessionStore.isCurrent(session))throw Error('verified_email_required');return body;
   },
   async signOut(){
