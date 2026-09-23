@@ -135,7 +135,13 @@ def main():
         assert after["is_admin"] is True
         assert before.get("remaining_views") == after.get("remaining_views")
         print("Administrator latest-market smoke passed: 2026-08-29, retry idempotent, no charge", flush=True)
+        try:
+            request('/functions/v1/market-compute', token=access_token, body={})
+            raise AssertionError('internal worker accepted a user token')
+        except RuntimeError as error:
+            assert 'HTTP 401' in str(error)
         for extra in [
+            {'window': 24, 'compare': 'custom', 'base_start': '2018-01', 'base_end': '2026-08', 'metric': 'mean'},
             {'window': 24, 'compare': 'yoy'},
             {'compare': 'custom', 'base_start': '2018-04', 'base_end': '2018-09'},
             {'metric': 'p60', 'district': '海淀', 'business_area': '中关村', 'rooms': '2室', 'area_min': 50, 'area_max': 100},
