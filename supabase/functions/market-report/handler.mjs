@@ -43,16 +43,14 @@ export function createMarketHandler({authenticate,rpc,manifest,publicBase,fetchP
         // Bound concurrency, aggregate each verified chunk immediately and let
         // the source rows be reclaimed.  Historical rows are never persisted.
         const years=[...new Set(months.map(month=>month.slice(0,4)))];
-        for(let offset=0;offset<years.length;offset+=4){
-         const batch=years.slice(offset,offset+4);
-         const chunks=await Promise.all(batch.map(year=>read(manifest.years[year])));
-         for(let i=0;i<batch.length;i++){
-          const year=batch[i],chunk=chunks[i];
+        // Parse one year at a time so decompressed JSON from several years
+        // cannot coexist with the report accumulator at the memory peak.
+        for(const year of years){
+          const chunk=await read(manifest.years[year]);
           for(const row of chunk){
             if(typeof row[0]!=='string'||row[0].slice(0,4)!==year||row[0]>'2025-08')throw Error('public_snapshot_mismatch');
           }
           accumulator.addPublic(chunk,selectedMonths);
-         }
         }
         for(let after=0;;){
           const page=await rpc('housing_market_private_rows',{p_uid:uid,p_lease:lease,p_after:after,p_page_size:5000,p_params:params});

@@ -1,4 +1,4 @@
-export const ALGORITHM='market-edge-v2';
+export const ALGORITHM='market-edge-v3';
 export function shiftMonth(month,delta){const [y,m]=month.split('-').map(Number),n=y*12+m-1+delta;return `${Math.floor(n/12)}-${String(n%12+1).padStart(2,'0')}`;}
 export function normalizeParams(input={},latest='2026-08'){
   if(!input||Array.isArray(input)||typeof input!=='object')throw Error('invalid_parameters');

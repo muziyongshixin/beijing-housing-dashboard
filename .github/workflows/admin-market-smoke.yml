@@ -2,6 +2,11 @@ name: Verify administrator latest market
 
 on:
   workflow_dispatch:
+    inputs:
+      qa_email:
+        description: 'Optional pre-provisioned disposable housing-refactor-qa account'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -20,5 +25,6 @@ jobs:
       - name: Verify administrator report without sending email
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HOUSING_QA_EMAIL: ${{ inputs.qa_email }}
           HOUSING_ADMIN_EMAIL: ${{ secrets.HOUSING_ADMIN_EMAIL }}
         run: python3 scripts/check_admin_market.py
