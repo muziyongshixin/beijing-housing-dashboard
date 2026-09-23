@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.market-report]
 verify_jwt = false
+
+[functions.market-compute]
+verify_jwt = false

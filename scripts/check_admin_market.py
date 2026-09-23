@@ -50,8 +50,10 @@ def paid_acceptance(admin_token, params):
     if not email:
         return
     assert email.startswith('housing-refactor-qa-') and email.endswith('@example.invalid')
-    buyer = login(email)
+    _, qa_user = request('/auth/v1/admin/users', body={'email': email, 'email_confirm': True})
+    buyer = None
     try:
+        buyer = login(email)
         code = 'bj_' + secrets.token_urlsafe(32)
         _, issued = request('/rest/v1/rpc/housing_admin_issue', token=admin_token, body={
             'p_email': email, 'p_token': code, 'p_order_ref': email,
@@ -97,7 +99,10 @@ def paid_acceptance(admin_token, params):
         assert valid == {'market_valid': True, 'community_valid': True}
         print('Paid acceptance passed: invalid query free, concurrent retry charged once, community/report share balance, final-credit race safe', flush=True)
     finally:
-        request('/auth/v1/logout?scope=local', token=buyer, body=None)
+        if buyer:
+            request('/auth/v1/logout?scope=local', token=buyer, body=None)
+        # Receipts/tokens are retained for SQL audit and removed by the operator.
+        print('Disposable QA account created; remove its receipts, tokens and account after audit', flush=True)
 
 
 def main():

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {computeMarket,metric} from '../supabase/functions/market-report/compute.mjs';
+import {computeMarket,metric,createMarketAccumulator} from '../supabase/functions/market-report/compute.mjs';
 import {normalizeParams} from '../supabase/functions/market-report/contract.mjs';
 
 const history={communities:[['甲区','甲商圈','甲小区'],['乙区','乙商圈','乙小区']],rows:[
@@ -57,4 +57,12 @@ test('empty selection retains 48 empty months; custom old-only districts retain 
  const custom=normalizeParams({compare:'custom',base_start:'2018-04',base_end:'2018-04'},'2026-08');
  const old=computeMarket(custom,{communities:history.communities,rows:[['2018-04',0,80,100,null,null,'2室']]});
  assert.equal(old.trends['甲区'].points.length,48);assert.ok(old.trends['甲区'].points.every(x=>x.price===null));
+});
+
+test('protected report parts reassemble exactly for long, scoped, empty and custom windows',()=>{
+ for(const input of [{window:24,compare:'yoy'},{district:'甲区',business_area:'甲商圈'},{rooms:'不存在'},{compare:'custom',base_start:'2018-04',base_end:'2018-06'}]){
+  const params=normalizeParams(input),all=computeMarket(params,history,privateRows);
+  const parts=['summary','city_trend','district_trends'].map(part=>{const a=createMarketAccumulator(params,history.communities,part);a.addPublic(history.rows);a.addPrivate(privateRows);return a.finish();});
+  assert.deepEqual({...parts[0],trends:{...parts[1].trends,...parts[2].trends}},all);
+ }
 });

@@ -5,7 +5,7 @@ import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {gunzipSync} from 'node:zlib';
 import {PGlite} from '@electric-sql/pglite';
-import {computeMarket} from '../supabase/functions/market-report/compute.mjs';
+import {computeMarket,createMarketAccumulator} from '../supabase/functions/market-report/compute.mjs';
 import {normalizeParams,historicalMonths} from '../supabase/functions/market-report/contract.mjs';
 
 const root=process.cwd(), sqlite=`${root}/data/transactions.sqlite3`, q=sql=>JSON.parse(execFileSync('sqlite3',['-readonly','-json',sqlite,sql],{encoding:'utf8',maxBuffer:128*1024*1024})||'[]');
@@ -31,7 +31,8 @@ function compare(a,b,path='report'){
  if(a&&b&&typeof a==='object'&&typeof b==='object'){assert.deepEqual(Object.keys(a).sort(),Object.keys(b).sort(),path+' keys');for(const key of Object.keys(a))compare(a[key],b[key],path+'.'+key);return;}
  assert.equal(a,b,path);
 }
-compare(edge,out);return {p,out,ms:sqlMs,edgeMs,historyRows:rows.length};}
+const parts=['summary','city_trend','district_trends'].map(part=>{const acc=createMarketAccumulator(p,catalog,part);acc.addPublic(rows);acc.addPrivate(privateRows);return acc.finish();});
+compare({...parts[0],trends:{...parts[1].trends,...parts[2].trends}},out);compare(edge,out);return {p,out,ms:sqlMs,edgeMs,historyRows:rows.length};}
 // Read raw values from SQLite, then compute percentiles independently with the
 // same linear interpolation definition used by PostgreSQL percentile_cont.
 const pick=(values,metric)=>{values=values.map(Number).filter(Number.isFinite).sort((a,b)=>a-b);if(!values.length)return null;if(metric==='mean')return values.reduce((a,b)=>a+b,0)/values.length;if(metric==='min')return values[0];if(metric==='max')return values.at(-1);const p=metric==='p30'?.3:metric==='p60'?.6:.5,i=(values.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return values[lo]+(values[hi]-values[lo])*(i-lo)};
