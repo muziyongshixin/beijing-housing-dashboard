@@ -187,7 +187,7 @@ Function failed due to not having enough compute resources (please check logs)
 - 常规回归：`npm run test:ui`、`npm run test:permissions`、`npm run test:pages`、`python3 -m unittest discover -s tests`。
 - 真实数据对账：`node tests/report_full_parity.mjs`，需本地有效库，不在公开 CI 上传私有输入。
 - 本地视觉复查：`node tests/market_preview_data.mjs` 后运行 `python3 tests/market_preview_server.py`，打开 `http://127.0.0.1:18881/`。明确为合成登录，无邮件发送。
-- 冷报告需要读取公开历史和私有分页，已测 24 月同比约 31 秒，缓存约 3 秒；不是即时计算。所有计算失败不产生新扣次，已成功交付后的网络重试依赖 10 分钟回执窗口。
+- 冷报告需要读取公开历史和私有分页，最终版本已测 24 月同比约 42 秒，缓存约 3 秒；不是即时计算。所有计算失败不产生新扣次，已成功交付后的网络重试依赖 10 分钟回执窗口。
 - 内部任务最多四份，受原有最多三份报告租约约束；任务不持久保存中间明细。生产保留私有报告缓存预算与 TTL。
 - 自动支付、定价、退款财务与内容发布不属于本轮重构。
 

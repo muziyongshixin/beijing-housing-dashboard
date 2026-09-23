@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       qa_email:
-        description: 'Optional pre-provisioned disposable housing-refactor-qa account'
+        description: 'Optional unused disposable housing-refactor-qa email; account is created via Admin API'
         required: false
         type: string
 

@@ -44,7 +44,7 @@ def market(token, params, request_id=None):
 
 
 def paid_acceptance(admin_token, params):
-    # Optional isolated account provisioned/cleaned by the operator. Never use a
+    # Optional isolated account created here and cleaned by the operator. Never use a
     # customer account: the address must have this generated QA-only prefix.
     email = os.environ.get('HOUSING_QA_EMAIL', '')
     if not email:
